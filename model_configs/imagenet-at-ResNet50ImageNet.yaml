@@ -1,0 +1,19 @@
+# Model Configuration for ImageNet AT ResNet50 model
+# ./checkpoints/wide_resnet50_2_l2_eps3_model.ckpt
+
+method: "at"
+dataset: imagenet
+checkpoint: ./checkpoints/resnet50_l2_eps3_model.ckpt
+model_type: ResNet50ImageNet
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 13
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+
+# Training details
+notes: |
+  Standard AT in the ImageNet table.
+  IS: 274.856 ± 3.505  FID: 15.972868329507605 steps 13

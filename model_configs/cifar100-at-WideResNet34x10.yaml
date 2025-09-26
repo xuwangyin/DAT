@@ -1,0 +1,17 @@
+# Model Configuration for CIFAR-100 standard AT WideResNet34x10 model
+
+method: "at"
+dataset: cifar100
+checkpoint: checkpoints/Cifar100Models/WideResNet34x10/Adversarial Training_02-05-2025_00:11:00/best_avg.pth
+model_type: WideResNet34x10
+
+# FID evaluation configuration
+fid_eval_config: experiments/cifar100/eval_fid/cifar100_conditional_wrn3410_eval_fid.yaml
+fid_num_steps: 15
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 0.5
+
+# Training details
+notes: |
+  Standard AT CIFAR-100 WideResNet34x10 model

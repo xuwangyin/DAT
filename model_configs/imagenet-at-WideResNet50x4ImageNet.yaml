@@ -1,0 +1,19 @@
+# Model Configuration for ImageNet AT model
+# ./checkpoints/wide_resnet50_4_l2_eps3_model.ckpt
+
+method: "at"
+dataset: imagenet
+checkpoint: ./checkpoints/wide_resnet50_4_l2_eps3_model.ckpt
+model_type: WideResNet50x4ImageNet
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 11
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+
+# Training details
+notes: |
+  Standard AT (dagger) in the ImageNet table.
+  FID: 37.535572501010165  IS: 271.531 ± 3.977 steps 11

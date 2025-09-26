@@ -1,0 +1,17 @@
+# Model Configuration for CIFAR-10 ratio WideResNet34x10 model
+
+method: "ratio"
+dataset: cifar10
+checkpoint: checkpoints/Cifar10Models/WideResNet34x10/cifar10_pgd/best_avg.pth
+model_type: WideResNet34x10
+
+# FID evaluation configuration
+fid_eval_config: experiments/cifar10/eval_fid/cifar10_conditional_wrn3410_eval_fid_steps33.yaml
+fid_num_steps: 31
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 0.5
+
+# Training details
+notes: |
+  Ratio CIFAR-10 WideResNet34x10 model

@@ -1,0 +1,37 @@
+name: rebm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - pip
+  - pip:
+    # PyTorch with CUDA support
+    - torch
+    - torchvision
+    - timm
+    
+    # Deep learning utilities
+    - einops
+    - jaxtyping
+    - scikit-learn
+    
+    # Experiment management
+    - simple-parsing
+    - wandb
+    
+    # Development and testing
+    - pytest
+    - ruff
+    
+    # Utilities
+    - tqdm
+    - torch-fidelity
+    - torchmetrics
+    - datasets
+    - git+https://github.com/fra31/auto-attack
