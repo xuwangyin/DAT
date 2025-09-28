@@ -73,3 +73,9 @@ python train.py model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
   python eval_ood_detection.py $config_file --ood-dataset $ood_dataset
   ```
   Example: `python eval_ood_detection.py model_configs/cifar100-at-WideResNet34x10.yaml --ood-dataset noise`
+
+## Related Work
+
+- **EGC Adversarial Robustness Evaluation**: [https://github.com/xuwangyin/EGC-robustness](https://github.com/xuwangyin/EGC-robustness) - Repository for evaluating the adversarial robustness of EGC ([arXiv:2304.02012](https://arxiv.org/abs/2304.02012))
+
+- **SADA-JEM Robustness Evaluation**: [https://github.com/xuwangyin/SADAJEM-robustness](https://github.com/xuwangyin/SADAJEM-robustness) - Repository for evaluating the robustness of SADA-JEM ([arXiv:2209.07959](https://arxiv.org/abs/2209.07959))
