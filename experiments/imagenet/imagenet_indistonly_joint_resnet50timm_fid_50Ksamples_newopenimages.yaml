@@ -75,7 +75,7 @@ n_imgs_per_metrics_log: 50000
 n_imgs_per_image_log: 50000
 n_imgs_per_classification_log: 50000
 n_imgs_per_ckpt_save: 1000000
-wandb_project: "AT-EBMs"
+wandb_project: "DAT"
 wandb_disabled: true
 tags: ['cifar100']
 fp16: false
