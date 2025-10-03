@@ -17,6 +17,7 @@ from eval_utils import (
     sanitize_job_name,
     create_log_directory,
     get_available_partition,
+    get_partition_time_limit,
     TeeWriter
 )
 
@@ -59,7 +60,6 @@ def load_train_yaml_config(config_file: str) -> dict:
     """Load YAML configuration file with training-specific validation."""
     config = load_yaml_config(config_file)
 
-    # Validate training-specific required fields
     train_required_fields = ['train_cmd']
     missing_fields = [field for field in train_required_fields if field not in config]
     if missing_fields:
@@ -77,17 +77,12 @@ def submit_job(
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
-    # Parse the train_cmd string into command parts
-    # Remove the leading python module flag if present and use our python_bin
     train_cmd = train_cmd.strip()
     if train_cmd.startswith('-m '):
-        # Replace -m with full python command
         train_cmd_parts = [python_bin] + shlex.split(train_cmd)
     else:
-        # Assume it's already a complete command
         train_cmd_parts = shlex.split(train_cmd)
 
-    # Check if slurm is available and not forced to use local
     if partition == 'local':
         use_slurm = False
     else:
@@ -98,15 +93,10 @@ def submit_job(
             use_slurm = False
 
     if use_slurm:
-        # SLURM submission
         if partition is None:
             partition = get_available_partition()
 
-        # Set time limits based on partition (longer for training)
-        time_limits = {'mi3008x': '24:00:00', 'mi3258x': '12:00:00', 'mi2508x': '48:00:00', 'mi2104x': '72:00:00', 'devel': '2:00:00', 'mi2101x': '48:00:00'}
-        time_limit = time_limits.get(partition, '24:00:00')
-
-        # Convert command parts back to string for SLURM wrap
+        time_limit = get_partition_time_limit(partition)
         train_cmd_str = " ".join(train_cmd_parts)
 
         sbatch_cmd = [
@@ -129,7 +119,6 @@ def submit_job(
             print(f"Error output: {e.stderr}")
             return False
     else:
-        # Local execution with streaming output to both terminal and log file
         try:
             print(f"Running training locally")
             with TeeWriter(log_file) as tee:
@@ -142,7 +131,6 @@ def submit_job(
                     universal_newlines=True
                 )
 
-                # Stream output line by line
                 for line in process.stdout:
                     tee.write(line)
 
@@ -177,7 +165,6 @@ def run_training_from_config(
     Returns:
         True if successful, False otherwise
     """
-    # Load configuration
     try:
         config = load_train_yaml_config(config_file)
     except (FileNotFoundError, ValueError) as e:
@@ -192,7 +179,6 @@ def run_training_from_config(
         print(f"Model type: {config['model_type']}")
         print(f"Train command: {config['train_cmd']}")
 
-    # Handle dry run
     if dry_run:
         train_cmd = config['train_cmd'].strip()
         if train_cmd.startswith('-m '):
@@ -202,21 +188,17 @@ def run_training_from_config(
         print(f"Would execute: {full_cmd}")
         return True
 
-    # Create log directory
     dataset = config['dataset']
     log_dir = create_log_directory(dataset, 'train')
 
-    # Generate job name and log file from config file
     config_name = Path(config_file).stem
     job_name = f"train_{config_name}"
     safe_job_name = sanitize_job_name(job_name)
 
     log_file = log_dir / f"{config_name}.log"
 
-    # Output log file before submitting job
     print(f"Log file: {log_file}")
 
-    # Submit the job
     if verbose:
         print(f"Submitting training job: {config_name}")
 

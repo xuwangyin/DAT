@@ -133,7 +133,7 @@ def get_available_partition() -> str:
     """Return first available partition that is up and has idle nodes."""
     try:
         for partition in ['mi3258x', 'mi3008x', 'mi2508x', 'mi2104x']:
-            result = subprocess.run(['sinfo', '-p', partition], 
+            result = subprocess.run(['sinfo', '-p', partition],
                                   capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')[1:]  # Skip header
@@ -144,3 +144,25 @@ def get_available_partition() -> str:
         return 'mi2508x'  # Fallback
     except:
         return 'mi2508x'  # Fallback
+
+
+def get_partition_time_limit(partition: str) -> str:
+    """Get the maximum time limit for a SLURM partition."""
+    # Automatic detection - currently disabled due to QOS policy enforcement
+    # try:
+    #     result = subprocess.run(['scontrol', 'show', 'partition', partition],
+    #                           capture_output=True, text=True, check=True)
+    #     for part in result.stdout.split():
+    #         if part.startswith('MaxTime='):
+    #             max_time = part.split('=')[1]
+    #             if '-' in max_time:  # Convert day format (4-00:00:00) to hours
+    #                 days, hms = max_time.split('-')
+    #                 h, m, s = hms.split(':')
+    #                 return f"{int(days)*24+int(h)}:{m}:{s}"
+    #             return max_time
+    # except:
+    #     pass
+    # return '24:00:00'
+
+    time_limits = {'mi3008x': '24:00:00', 'mi3258x': '12:00:00', 'mi2508x': '48:00:00', 'mi2104x': '24:00:00', 'devel': '2:00:00', 'mi2101x': '48:00:00'}
+    return time_limits.get(partition, '24:00:00')
