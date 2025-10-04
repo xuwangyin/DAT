@@ -47,6 +47,7 @@ import rebm.training.data
 import rebm.training.misc
 import rebm.training.modeling
 from rebm.training.adv_attacks import pgd_attack, pgd_attack_xent
+from rebm.training.scheduling import should_trigger_event
 from rebm.training.average_model import AveragedModel
 from rebm.training.calibration import eval_calibration
 from rebm.training.config_classes import (
@@ -228,34 +229,6 @@ class TrainConfig:
     @property
     def dtype(self) -> torch.dtype:
         return torch.float16 if self.fp16 else torch.float32
-
-    def should_trigger_event(
-        self,
-        global_step_one_indexed: int,
-        interval_in_imgs: int,
-        at_end: bool = False,
-    ):
-        global_step0 = global_step_one_indexed - 1
-        global_images0 = global_step0 * self.batch_size
-        next_images = (global_step0 + 1) * self.batch_size
-
-        # Special case for first step
-        if global_step0 == 0 and not at_end:
-            return True
-
-        if at_end:
-            # Check if we're approaching the end of an interval
-            current_interval = global_images0 // interval_in_imgs
-            next_interval = next_images // interval_in_imgs
-            return (current_interval < next_interval) or (
-                global_images0 % interval_in_imgs
-                >= interval_in_imgs - self.batch_size
-            )
-        else:
-            # For start triggers, check if we're crossing into a new interval
-            prev_interval = global_images0 // interval_in_imgs
-            next_interval = next_images // interval_in_imgs
-            return prev_interval < next_interval
 
     def __post_init__(self):
         if self.resume_path is not None:
@@ -1015,29 +988,34 @@ def train(cfg: TrainConfig):
                 },
                 step=global_step_one_indexed * cfg.batch_size,
             )
-            is_metric_logging_step = cfg.should_trigger_event(
+            is_metric_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
+                batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_metrics_log,
             )
-            is_image_logging_step = cfg.should_trigger_event(
+            is_image_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
+                batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_image_log * 100,
             )
-            is_fid_logging_step = cfg.should_trigger_event(
+            is_fid_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
+                batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_image_log,
             )
             is_classification_logging_step = (
                 cfg.data.num_classes > 1
                 and cfg.n_imgs_per_classification_log is not None
-                and cfg.should_trigger_event(
+                and should_trigger_event(
                     global_step_one_indexed=global_step_one_indexed,
+                    batch_size=cfg.batch_size,
                     interval_in_imgs=cfg.n_imgs_per_classification_log,
                 )
             )
 
-            if cfg.should_trigger_event(
+            if should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
+                batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_ckpt_save,
                 at_end=True,
             ):
