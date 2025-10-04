@@ -3,10 +3,7 @@ data:
   indist_ds_dir: "data/ImageNet"
   mixed_id: false
   outdist_dataset: "OpenImageO"
-  outdist_ds_type: "std"
-  outdist_hf_cache_dir: null
   outdist_std_dir: "data/OpenImage-O-large/train"
-  outdist_ds_filter: null
   num_workers: 16
   num_classes: 1000
 

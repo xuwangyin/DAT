@@ -53,10 +53,7 @@ class DataConfig:
 
     # Out-distribution dataset config
     outdist_dataset: str
-    outdist_ds_type: Literal["hf", "std"]
-    outdist_hf_cache_dir: str
     outdist_std_dir: str
-    outdist_ds_filter: str | None
 
     num_workers: int
 
@@ -83,46 +80,12 @@ class ConvNextConfig(BaseModelConfig):
     model_id: str = "convnextv2_base"
 
 
-@dataclass
-class R3GANConfig(BaseModelConfig):
-    """Configuration specific to R3GAN Discriminator"""
-
-    WidthPerStage: List[int] = None
-    BlocksPerStage: List[int] = None
-    CardinalityPerStage: List[int] = None
-    ExpansionFactor: int = 2
-
-    def __post_init__(self):
-        if self.WidthPerStage is None:
-            self.WidthPerStage = [
-                3 * x // 4 for x in [1024, 1024, 1024, 1024, 512, 256, 128]
-            ]
-        if self.BlocksPerStage is None:
-            self.BlocksPerStage = [2 * x for x in [1, 1, 1, 1, 1, 1, 1]]
-        if self.CardinalityPerStage is None:
-            self.CardinalityPerStage = [
-                3 * x for x in [32, 32, 32, 32, 16, 8, 4]
-            ]
-
-
-@dataclass
-class StarGANConfig(BaseModelConfig):
-    """Configuration specific to StarGAN models"""
-
-    # Add any StarGAN-specific parameters here
-    pass
-
-
 def create_model_config(config_dict: dict) -> BaseModelConfig:
     """Factory function to create the appropriate model config"""
     model_type = config_dict.get("model_type", "").lower()
 
     if model_type.startswith("convnext"):
         return ConvNextConfig(**config_dict)
-    elif model_type == "r3gan":
-        return R3GANConfig(**config_dict)
-    elif model_type == "stargan":
-        return StarGANConfig(**config_dict)
     else:
         # Return BaseModelConfig for all other cases (ResNet, WideResNet, etc.)
         return BaseModelConfig(**config_dict)

@@ -3,10 +3,7 @@ data:
   indist_ds_dir: "./datasets"
   mixed_id: false
   outdist_dataset: "tinyimages"
-  outdist_ds_type: "std"
-  outdist_hf_cache_dir: null
   outdist_std_dir: "./data/tiny_images.bin"
-  outdist_ds_filter: null
   num_workers: 2
   num_classes: 100
 
