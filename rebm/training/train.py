@@ -22,8 +22,8 @@ from typing import Callable, Iterable, Literal, Optional, Tuple
 
 import einops
 # import kornia.augmentation as K
+from omegaconf import OmegaConf
 import numpy as np
-import simple_parsing
 import torch
 import torch.utils.data
 import torchvision.utils
@@ -1624,217 +1624,53 @@ def train(cfg: TrainConfig):
             break
 
 
-# Example: python rebm/training/train.py --config="rebm/training/lsun-baselines/stargan.yaml" --image_log_num_steps=10
 if __name__ == "__main__":
-    parser = simple_parsing.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
-    parser.add_argument(
-        "--image_log_num_steps", type=int, help="Override image_log.num_steps"
-    )
-    parser.add_argument(
-        "--image_log_num_samples",
-        type=int,
-        help="Override image_log.num_samples",
-    )
-    parser.add_argument(
-        "--image_log_ood_data_dir", type=str, help="Override image_log.ood_data_dir"
-    )
-    parser.add_argument(
-        "--image_log_target_class", type=int, help="Override image_log.target_class"
-    )
-    parser.add_argument(
-        "--ckpt_path", type=str, help="Override model.ckpt_path"
-    )
-    parser.add_argument(
-        "--model_type", type=str, help="Override model.model_type"
-    )
-    parser.add_argument(
-        "--indist_attack_eps", type=float, help="Override indist_attack.eps"
-    )
-    parser.add_argument(
-        "--indist_attack_steps", type=int, help="Override indist_attack.fixed_steps"
-    )
-    parser.add_argument(
-        "--generate_counterfactuals",
-        action="store_true",
-        help="Generate counterfactual examples instead of training",
-    )
-    parser.add_argument(
-        "--evaluate_ood_detection",
-        action="store_true", 
-        help="Evaluate OOD detection instead of training",
-    )
-    parser.add_argument(
-        "--ood_detection_logsumexp",
-        action="store_true", 
-        help="Evaluate OOD detection instead of training",
-    )
-    parser.add_argument(
-        "--outdist_dataset_ood_detection",
-        type=str,
-        choices=["noise", "svhn", "cifar100", "cifar10", "imagenet"],
-        help="Dataset to use for OOD detection evaluation"
-    )
-    parser.add_argument(
-        "--logsumexp_sampling",
-        action="store_true",
-        help="Override cfg.logsumexp_sampling to use logsumexp for sampling"
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        help="Override trainconfig batch_size"
-    )
-    parser.add_argument(
-        "--optimizer",
-        type=str,
-        choices=["sgd", "adam", "adamw"],
-        help="Override optimizer"
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        help="Override learning rate"
-    )
-    parser.add_argument(
-        "--wd",
-        type=float,
-        help="Override weight decay"
-    )
-    parser.add_argument(
-        "--auc_th",
-        type=float,
-        help="Override AUC_th threshold"
-    )
-    args = parser.parse_args()
-    config_file = args.config
-    cfg = TrainConfig.from_yaml(config_file)
+    import sys
 
-    # Override image_log.num_steps if specified
-    if args.image_log_num_steps is not None:
-        LOGGER.info(
-            f"Overriding image_log.num_steps from {cfg.image_log.num_steps} to {args.image_log_num_steps}"
-        )
-        cfg.image_log.num_steps = args.image_log_num_steps
+    # Parse arguments
+    args = sys.argv[1:]
+    config_file = None
+    overrides = []
 
-    # Override image_log.num_samples if specified
-    if args.image_log_num_samples is not None:
-        LOGGER.info(
-            f"Overriding image_log.num_samples from {cfg.image_log.num_samples} to {args.image_log_num_samples}"
-        )
-        cfg.image_log.num_samples = args.image_log_num_samples
+    i = 0
+    while i < len(args):
+        if args[i] == '--config':
+            if i + 1 < len(args):
+                config_file = args[i + 1]
+                i += 2
+            else:
+                raise ValueError("--config requires a file path")
+        elif args[i] in ['-h', '--help']:
+            print("Training script with OmegaConf for configuration management")
+            print("\nUsage: python -m rebm.training.train --config CONFIG_FILE [KEY=VALUE ...]")
+            print("\nExamples:")
+            print("  # Basic usage")
+            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml")
+            print("\n  # Override top-level fields")
+            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml batch_size=256 lr=0.001")
+            print("\n  # Override nested fields (use dot notation)")
+            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth")
+            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml image_log.num_steps=50 attack.max_steps=100")
+            sys.exit(0)
+        else:
+            # This is an override in KEY=VALUE format
+            overrides.append(args[i])
+            i += 1
 
-    # Override image_log.ood_data_dir if specified
-    if args.image_log_ood_data_dir is not None:
-        LOGGER.info(
-            f"Overriding image_log.ood_data_dir from {cfg.image_log.ood_data_dir} to {args.image_log_ood_data_dir}"
-        )
-        cfg.image_log.ood_data_dir = args.image_log_ood_data_dir
+    if config_file is None:
+        raise ValueError("--config argument is required. Use --help for usage information.")
 
-    # Override image_log.target_class if specified
-    if args.image_log_target_class is not None:
-        LOGGER.info(
-            f"Overriding image_log.target_class from {cfg.image_log.target_class} to {args.image_log_target_class}"
-        )
-        cfg.image_log.target_class = args.image_log_target_class
+    # Load YAML config with OmegaConf
+    omega_cfg = OmegaConf.load(config_file)
 
-    # Override model.ckpt_path if specified
-    if args.ckpt_path is not None:
-        LOGGER.info(
-            f"Overriding model.ckpt_path from {cfg.model.ckpt_path} to {args.ckpt_path}"
-        )
-        cfg.model.ckpt_path = args.ckpt_path
+    # Apply overrides using OmegaConf's dotlist
+    if overrides:
+        override_cfg = OmegaConf.from_dotlist(overrides)
+        omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
 
-    # Override model.model_type if specified
-    if args.model_type is not None:
-        LOGGER.info(
-            f"Overriding model.model_type from {cfg.model.model_type} to {args.model_type}"
-        )
-        cfg.model.model_type = args.model_type
-
-    # Override indist_attack.eps if specified
-    if args.indist_attack_eps is not None:
-        old_eps = cfg.indist_attack.eps
-        cfg.indist_attack.eps = args.indist_attack_eps
-        LOGGER.info(
-            f"Overriding indist_attack.eps from {old_eps} to {args.indist_attack_eps}"
-        )
-        
-    # Override indist_attack.fixed_steps if specified
-    if args.indist_attack_steps is not None:
-        old_steps = cfg.indist_attack.fixed_steps
-        cfg.indist_attack.fixed_steps = args.indist_attack_steps
-        LOGGER.info(
-            f"Overriding indist_attack.fixed_steps from {old_steps} to {args.indist_attack_steps}"
-        )
-
-    # Set use_counterfactuals flag if specified
-    if args.generate_counterfactuals:
-        LOGGER.info(
-            "Setting use_counterfactuals to True based on command-line argument"
-        )
-        cfg.use_counterfactuals = True
-        
-    # Set evaluate_ood_detection flag if specified
-    if args.evaluate_ood_detection:
-        LOGGER.info(
-            "Setting evaluate_ood_detection to True based on command-line argument"
-        )
-        cfg.evaluate_ood_detection = True
-    if args.ood_detection_logsumexp:
-        LOGGER.info(
-            "Setting ood_detection_logsumexp to True based on command-line argument"
-        )
-        cfg.ood_detection_logsumexp = True
-        
-    # Override outdist_dataset_ood_detection if specified
-    if args.outdist_dataset_ood_detection is not None:
-        LOGGER.info(
-            f"Overriding outdist_dataset_ood_detection from {cfg.outdist_dataset_ood_detection} to {args.outdist_dataset_ood_detection}"
-        )
-        cfg.outdist_dataset_ood_detection = args.outdist_dataset_ood_detection
-        
-    # Override logsumexp_sampling if specified
-    if args.logsumexp_sampling:
-        LOGGER.info(
-            f"Overriding logsumexp_sampling from {cfg.logsumexp_sampling} to True"
-        )
-        cfg.logsumexp_sampling = True
-
-    # Override batch_size if specified
-    if args.batch_size is not None:
-        LOGGER.info(
-            f"Overriding batch_size from {cfg.batch_size} to {args.batch_size}"
-        )
-        cfg.batch_size = args.batch_size
-
-    # Override optimizer if specified
-    if args.optimizer is not None:
-        LOGGER.info(
-            f"Overriding optimizer from {cfg.optimizer} to {args.optimizer}"
-        )
-        cfg.optimizer = args.optimizer
-
-    # Override lr if specified
-    if args.lr is not None:
-        LOGGER.info(
-            f"Overriding lr from {cfg.lr} to {args.lr}"
-        )
-        cfg.lr = args.lr
-
-    # Override wd if specified
-    if args.wd is not None:
-        LOGGER.info(
-            f"Overriding wd from {cfg.wd} to {args.wd}"
-        )
-        cfg.wd = args.wd
-
-    # Override AUC_th if specified
-    if args.auc_th is not None:
-        LOGGER.info(
-            f"Overriding AUC_th from {cfg.AUC_th} to {args.auc_th}"
-        )
-        cfg.AUC_th = args.auc_th
+    # Convert to dict and create TrainConfig
+    config_dict = OmegaConf.to_container(omega_cfg, resolve=True)
+    cfg = TrainConfig(**config_dict)
 
     # Don't upload .pth files to wandb, since they are big
     # We just save them on disk for now.
