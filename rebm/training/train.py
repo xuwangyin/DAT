@@ -45,6 +45,7 @@ import rebm.models.resnet
 import rebm.training.adv_attacks
 import rebm.training.data
 import rebm.training.misc
+import rebm.training.modeling
 from rebm.training.adv_attacks import pgd_attack, pgd_attack_xent
 from rebm.training.average_model import AveragedModel
 from rebm.training.calibration import eval_calibration
@@ -208,9 +209,6 @@ class TrainConfig:
     mixup_alpha: int = 5
     mixup_beta: int = 1
     tinyimages_loader: str = "innout"
-    use_batchnorm: bool = False
-    use_layernorm: bool = True
-    use_convstem: bool = True
     indist_train_only: bool = False
     fixed_lr: bool = False
     logsumexp: bool = True
@@ -299,214 +297,6 @@ class TrainConfig:
     @property
     def device(self) -> torch.device:
         return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    def get_model(self) -> nn.Module:
-        cfg = self.model
-
-        def load_checkpoint(model, ckpt_path, weights_only=True):
-            state_dict = torch.load(
-                ckpt_path, weights_only=weights_only, map_location="cpu"
-            )
-
-            # EMA model
-            if any(
-                k.startswith("module.n_averaged") for k in state_dict.keys()
-            ):
-                del state_dict["module.n_averaged"]
-                new_state_dict = OrderedDict()
-                for k, v in state_dict.items():
-                    name = k[14:] if k.startswith("module.module.") else k
-                    new_state_dict[name] = v
-                state_dict = new_state_dict
-
-            # Check if the state_dict has 'module.' prefix (saved from DataParallel)
-            # but the current model is not a DataParallel model
-            is_state_dict_data_parallel = any(
-                k.startswith("module.") for k in state_dict.keys()
-            )
-            is_model_data_parallel = isinstance(model, nn.DataParallel)
-
-            if is_state_dict_data_parallel and not is_model_data_parallel:
-                # Remove 'module.' prefix for loading into non-DataParallel model
-
-                new_state_dict = OrderedDict()
-                for k, v in state_dict.items():
-                    name = (
-                        k[7:] if k.startswith("module.") else k
-                    )  # remove 'module.' prefix
-                    new_state_dict[name] = v
-                state_dict = new_state_dict
-            elif not is_state_dict_data_parallel and is_model_data_parallel:
-                # Add 'module.' prefix for loading into DataParallel model
-                new_state_dict = OrderedDict()
-                for k, v in state_dict.items():
-                    name = f"module.{k}" if not k.startswith("module.") else k
-                    new_state_dict[name] = v
-                state_dict = new_state_dict
-
-            model.load_state_dict(state_dict)
-            LOGGER.info(f"Loaded pretrained checkpoint from: {ckpt_path}")
-            return model
-
-        def load_resume_checkpoint(model):
-            ckpt_path = os.path.join(self.resume_path, "model.pth")
-            model = load_checkpoint(model, ckpt_path, weights_only=True)
-            LOGGER.info(f"Resuming model from {self.resume_path}")
-            return model
-
-        match cfg.model_type:
-            case model_type if "resnet" in model_type.lower() and model_type.lower().endswith("imagenet"):
-                model_class = globals().get(cfg.model_type)
-
-                # Instantiate the model
-                model = model_class(
-                    num_classes=self.data.num_classes,
-                    normalize_input=cfg.normalize_input,
-                    normalization_type=self.data.indist_dataset.lower(),
-                    use_batchnorm=self.use_batchnorm,
-                ).to(self.device)
-
-                model = nn.DataParallel(model)
-
-                # Load checkpoint if specified
-                if cfg.ckpt_path is not None:
-                    model = load_checkpoint(model, cfg.ckpt_path)
-
-                # Resume from checkpoint if specified
-                if self.resume_path is not None:
-                    model = load_resume_checkpoint(model)
-
-                return model
-
-            case model_type if model_type.startswith("convnext_"):
-                # Handle ConvNeXt models from timm
-                model_class = globals().get(cfg.model_type)
-
-                # Instantiate the model with custom parameters
-                model = model_class(
-                    num_classes=self.data.num_classes,
-                    normalize_input=cfg.normalize_input,
-                    use_layernorm=self.use_layernorm,
-                ).to(self.device)
-
-                if self.use_convstem:
-                    model = replace_convstem(model, cfg.model_type)
-
-                model = nn.DataParallel(model)
-
-                # Load checkpoint if specified
-                if cfg.ckpt_path is not None:
-                    model = load_checkpoint(model, cfg.ckpt_path)
-
-                # Resume from checkpoint if specified
-                if self.resume_path is not None:
-                    model = load_resume_checkpoint(model)
-
-                return model
-
-            case model_type if (
-                model_type.lower().startswith(("resnet", "preactresnet", "wideresnet")) and
-                not model_type.lower().endswith("imagenet")
-            ):
-                # Handle different types of ResNet models
-                if cfg.model_type.lower().startswith("preact"):
-                    # For PreActResNet models, use the preactresnet module
-                    model_class = getattr(
-                        rebm.models.preactresnet, cfg.model_type
-                    )
-                elif cfg.model_type.lower().startswith("wideresnet"):
-                    # For WideResNet models, use the wide_resnet module
-                    model_class = getattr(
-                        rebm.models.wide_resnet_innoutrobustness, cfg.model_type
-                    )
-                else:
-                    # For standard ResNet models, use the robustness_resnet_cifar10 module
-                    model_class = getattr(
-                        rebm.models.robustness_resnet_cifar10, cfg.model_type
-                    )
-
-                # Instantiate the model
-                model = model_class(
-                    num_classes=self.data.num_classes,
-                    normalize_input=cfg.normalize_input,
-                    use_batchnorm=self.use_batchnorm,
-                ).to(self.device)
-
-                model = nn.DataParallel(model)
-
-                # Load checkpoint if specified
-                if cfg.ckpt_path is not None:
-                    model = load_checkpoint(model, cfg.ckpt_path)
-
-                # Resume from checkpoint if specified
-                if self.resume_path is not None:
-                    model = load_resume_checkpoint(model)
-
-                return model
-
-            case _:
-                raise ValueError(f"Unknown model: {cfg.model_type}")
-
-    def _get_base_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        match self.optimizer:
-            case "sgd":
-                # Copy https://github.com/locuslab/robust_overfitting/blob/c47a25c5e00c8b2bb35488d962c04dd771b7e9af/train_cifar.py#L230
-                return torch.optim.SGD(
-                    model.parameters(),
-                    lr=self.lr,
-                    momentum=0.9,
-                    weight_decay=self.wd,
-                    nesterov=True,
-                )
-
-            case "adam":
-                return torch.optim.Adam(
-                    model.parameters(),
-                    lr=self.lr,
-                    betas=(0.0, 0.99),
-                    weight_decay=self.wd,
-                )
-
-            case "adamw":
-                return torch.optim.AdamW(
-                    model.parameters(),
-                    lr=self.lr,
-                    betas=(0.9, 0.95),
-                    weight_decay=self.wd,
-                )
-
-            case _:
-                raise ValueError(f"Unknown optimizer: {self.optimizer}")
-
-    def get_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
-        optimizer = self._get_base_optimizer(model)
-        if self.resume_path is not None:
-            optimizer.load_state_dict(
-                torch.load(os.path.join(self.resume_path, "optimizer.pth"))
-            )
-            LOGGER.info(f"Resuming optimizer from {self.resume_path}")
-
-        return optimizer
-
-    def save_state(
-        self, model: nn.Module, optimizer: torch.optim.Optimizer, step: int
-    ):
-        rebm.training.misc.save_model(
-            model, os.path.join(wandb.run.dir, f"model_{step}.pth")
-        )
-        rebm.training.misc.save_model(
-            optimizer, os.path.join(wandb.run.dir, f"optimizer_{step}.pth")
-        )
-
-    def save_best_fid_model(self, model: nn.Module):
-        """Save the model when a new best FID is achieved."""
-        best_model_path = os.path.join(wandb.run.dir, "model_bestfid.pth")
-        rebm.training.misc.save_model(model, best_model_path)
-
-    def save_best_accuracy_model(self, model: nn.Module):
-        """Save the model when a new best test accuracy is achieved."""
-        best_model_path = os.path.join(wandb.run.dir, "model_bestacc.pth")
-        rebm.training.misc.save_model(model, best_model_path)
 
 
 
@@ -966,7 +756,13 @@ def train(cfg: TrainConfig):
         LOGGER.info(
             "Counterfactual generation requested. Initializing model..."
         )
-        model = cfg.get_model().to(cfg.device)
+        model = rebm.training.modeling.get_model(
+            model_config=cfg.model,
+            device=cfg.device,
+            num_classes=cfg.data.num_classes,
+            indist_dataset=cfg.data.indist_dataset,
+            resume_path=cfg.resume_path,
+        ).to(cfg.device)
         model.eval()  # Ensure model is in evaluation mode
 
         # Create data loader specifically for counterfactual generation
@@ -988,7 +784,13 @@ def train(cfg: TrainConfig):
         LOGGER.info(
             "OOD detection evaluation requested. Initializing model..."
         )
-        model = cfg.get_model().to(cfg.device)
+        model = rebm.training.modeling.get_model(
+            model_config=cfg.model,
+            device=cfg.device,
+            num_classes=cfg.data.num_classes,
+            indist_dataset=cfg.data.indist_dataset,
+            resume_path=cfg.resume_path,
+        ).to(cfg.device)
         model.eval()  # Ensure model is in evaluation mode
 
         # Create data loaders for in-distribution and out-of-distribution data
@@ -1112,7 +914,13 @@ def train(cfg: TrainConfig):
 
     criterion = nn.BCEWithLogitsLoss(reduction="mean")
     criterion_xent = nn.CrossEntropyLoss(reduction="mean")
-    optimizer = cfg.get_optimizer(model)
+    optimizer = rebm.training.modeling.get_optimizer(
+        model=model,
+        optimizer_name=cfg.optimizer,
+        lr=cfg.lr,
+        wd=cfg.wd,
+        resume_path=cfg.resume_path,
+    )
 
     get_metrics_shared_kwargs = dict(
         model=model,
@@ -1234,13 +1042,13 @@ def train(cfg: TrainConfig):
                 at_end=True,
             ):
                 if cfg.use_ema:
-                    cfg.save_state(
+                    rebm.training.modeling.save_checkpoint(
                         model=non_parallel_avg_model.module,
                         optimizer=optimizer,
                         step=global_step_one_indexed,
                     )
                 else:
-                    cfg.save_state(
+                    rebm.training.modeling.save_checkpoint(
                         model=model.module,
                         optimizer=optimizer,
                         step=global_step_one_indexed,
@@ -1265,10 +1073,10 @@ def train(cfg: TrainConfig):
                 if is_new_best_fid:
                     if cfg.use_ema:
                         print('saving EMA model')
-                        cfg.save_best_fid_model(eval_model.module.module)
+                        rebm.training.modeling.save_best_fid_model(eval_model.module.module)
                     else:
                         print('saving regular model')
-                        cfg.save_best_fid_model(eval_model.module)
+                        rebm.training.modeling.save_best_fid_model(eval_model.module)
                     LOGGER.info(f"New best FID: {fid}")
                 wandb.log(
                     dataclasses.asdict(image_generation_metrics),
@@ -1359,9 +1167,9 @@ def train(cfg: TrainConfig):
                 is_new_best_acc = classification_metrics.update(**metrics_dict)
                 if is_new_best_acc:
                     if cfg.use_ema:
-                        cfg.save_best_accuracy_model(eval_model.module.module)
+                        rebm.training.modeling.save_best_accuracy_model(eval_model.module.module)
                     else:
-                        cfg.save_best_accuracy_model(eval_model.module)
+                        rebm.training.modeling.save_best_accuracy_model(eval_model.module)
 
                 wandb.log(
                     dataclasses.asdict(classification_metrics),

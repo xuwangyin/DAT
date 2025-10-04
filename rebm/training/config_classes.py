@@ -68,6 +68,8 @@ class BaseModelConfig:
     ckpt_path: Optional[str] = None
     which_logit: Literal["first", "all", "bird"] = "first"
     normalize_input: bool = True
+    use_batchnorm: bool = False
+    use_layernorm: bool = True
 
 
 @dataclass
@@ -78,6 +80,7 @@ class ConvNextConfig(BaseModelConfig):
     drop_path_rate: float = 0.1
     head_init_scale: float = 1.0
     model_id: str = "convnextv2_base"
+    use_convstem: bool = True
 
 
 def create_model_config(config_dict: dict) -> BaseModelConfig:

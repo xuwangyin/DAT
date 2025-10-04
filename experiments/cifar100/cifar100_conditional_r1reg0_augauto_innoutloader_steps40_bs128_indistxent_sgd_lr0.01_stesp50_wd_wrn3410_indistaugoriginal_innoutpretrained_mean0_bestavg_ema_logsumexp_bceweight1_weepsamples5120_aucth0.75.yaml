@@ -29,6 +29,7 @@ model:
   ckpt_path: "checkpoints/Cifar100Models/WideResNet34x10/Adversarial Training_02-05-2025_00:11:00/best_avg.pth"
   which_logit: "first"
   normalize_input: true
+  use_batchnorm: false
 
 image_log:
   attack_type: "pgd"
@@ -85,7 +86,6 @@ augm_type_generation: "original"
 tinyimages_loader: "innout"
 
 
-use_batchnorm: false
 fixed_lr: true
 
 # Optional parameters (will use default paths if not specified)

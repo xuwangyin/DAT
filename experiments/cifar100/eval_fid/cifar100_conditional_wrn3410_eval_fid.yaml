@@ -36,6 +36,7 @@ model:
   ckpt_path: null
   which_logit: "first"
   normalize_input: true
+  use_batchnorm: false
 
 image_log:
   attack_type: "pgd"
@@ -89,7 +90,6 @@ augm_type_generation: "original"
 tinyimages_loader: "innout"
 
 
-use_batchnorm: false
 fixed_lr: true
 
 # Optional parameters (will use default paths if not specified)
