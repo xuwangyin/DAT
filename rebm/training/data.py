@@ -1,9 +1,8 @@
-import os.path
-import pathlib
-import random
-from typing import Iterable, Literal
+"""Data management for training - handles dataset and dataloader creation."""
 
-import datasets
+import logging
+from typing import Literal
+
 import torch
 import torch.utils.data
 import torchvision.datasets
@@ -13,214 +12,10 @@ import InNOutRobustness.utils.datasets as dl
 from InNOutRobustness.utils.datasets.augmentations.cifar_augmentation import (
     get_cifar10_augmentation,
 )
+from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import get_imageNet_augmentation
+from rebm.training.config_classes import DataConfig
 
-
-class FilteredImageFolder(torchvision.datasets.ImageFolder):
-    def __init__(
-        self,
-        bad_indices: Iterable[int],
-        **kwargs,
-    ):
-        self.bad_indices = bad_indices  # Need to set first since super().__init__ calls find_classes
-        super().__init__(**kwargs)
-
-    def find_classes(
-        self, directory: str | pathlib.Path
-    ) -> tuple[list[str], dict[str, int]]:
-        """Override find_classes to filter out bird classes."""
-        classes, class_to_idx = super().find_classes(directory)
-
-        # Remove the bad indices from the classes
-        classes = [
-            cls for i, cls in enumerate(classes) if i not in self.bad_indices
-        ]
-        class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
-
-        return classes, class_to_idx
-
-
-# fmt: off
-# TODO: We should recheck these indices at some point.
-IMAGENET_BIRD_INDICES = [
-    7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-    80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100,
-    127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146,
-    162, 448, 517, 665, 715, 793, 885, 902, 908
-]
-# fmt: on
-
-
-def get_hf_imagenet256_dataset(
-    hf_cache_dir: str,
-    shuffle: bool = True,
-    split: Literal["train", "validation", "test"] = "train",
-    shuffle_seed: int = 42,
-    shuffle_buffer_size: int = 10_000,
-    filter: str | None = None,
-):
-    """
-    If this function crashes due to the dataset not being found, double check
-    that you have followed the instructions in the README that download the
-    data.
-    """
-    tf = transforms.Compose(
-        [
-            transforms.RandomResizedCrop(256, interpolation=2),
-            transforms.RandomHorizontalFlip(),
-        ]
-    )
-
-    def transform_fn(examples):
-        examples["pixel_values"] = [
-            tf(image.convert("RGB")) for image in examples["image"]
-        ]
-        return examples
-
-    ds = datasets.load_dataset(
-        os.path.join(hf_cache_dir, "imagenet-1k"), streaming=True, split=split
-    )
-
-    # removed filter type images from imagenet
-    if filter == "birds" or filter == "bird":
-        # see prepare_dataset/imagenet_no_birds.py to see how i got these
-        ds = ds.filter(lambda x: x["label"] not in IMAGENET_BIRD_INDICES)
-    elif filter == "only birds" or filter == "only bird":
-        # just the birds from imagenet
-        ds = ds.filter(lambda x: x["label"] in IMAGENET_BIRD_INDICES)
-    elif filter is not None:
-        raise ValueError(f"Unknown filter: {filter}")
-
-    if shuffle:
-        ds = ds.shuffle(buffer_size=shuffle_buffer_size, seed=shuffle_seed)
-
-    return ds.map(
-        transform_fn,
-        remove_columns=["image"],
-        batched=True,
-    ).with_format("torch")
-
-
-def get_imagenet256_dataset(
-    datadir,
-    split: Literal["train", "test", "val"] = "train",
-    interpolation=2,
-    transform=None,
-    drop_birds: bool = True,
-):
-    if split == "test":
-        # imagenet doesn't have labels on the test set
-        # TODO: Implement https://pytorch.org/vision/main/generated/torchvision.datasets.DatasetFolder.html#torchvision.datasets.DatasetFolder.find_classes
-        raise NotImplementedError("Need to override find_classes for test set")
-
-    # the straight up image folder version
-    if transform is None:
-        transform = transforms.Compose(
-            [
-                transforms.RandomResizedCrop(256, interpolation=interpolation),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-            ]
-        )
-
-    if drop_birds:
-        return FilteredImageFolder(
-            bad_indices=IMAGENET_BIRD_INDICES,
-            root=os.path.join(datadir, split),
-            transform=transform,
-        )
-
-    return torchvision.datasets.ImageFolder(
-        root=os.path.join(datadir, split), transform=transform
-    )
-
-
-def get_lsun_bird_dataset(
-    lsun_path: str,
-    split: Literal["train", "val"] = "train",
-):
-    return torchvision.datasets.ImageFolder(
-        root=os.path.join(lsun_path, split),
-        transform=transforms.Compose([transforms.ToTensor()]),
-    )
-
-
-def get_lsun_bird__cluster_dataset(lsun_path: str):
-    return torchvision.datasets.ImageFolder(
-        root=lsun_path,
-        transform=transforms.Compose([transforms.ToTensor()]),
-    )
-
-
-def get_hf_afhqv2_cat_dataset(
-    hf_cache_dir: str,
-    extra_transforms: list[torch.nn.Module] | None = None,
-    split: Literal["train", "test"] = "train",
-    num_proc: int = 8,
-) -> tuple[torch.utils.data.IterableDataset, int]:
-    """
-    If this function crashes due to the dataset not being found, double check
-    that you have followed the instructions in the README that download the
-    data.
-    """
-    tf = transforms.Compose(
-        [
-            # Resize so minimum dimension is 256, then crop to 256x256
-            transforms.Resize(256),
-            transforms.CenterCrop(256),
-            transforms.RandomHorizontalFlip(),
-        ]
-        + ([] if extra_transforms is None else extra_transforms)
-    )
-
-    def transform_fn(examples):
-        examples["pixel_values"] = [
-            tf(image.convert("RGB")) for image in examples["image"]
-        ]
-        return examples
-
-    ds = (
-        datasets.load_dataset(
-            os.path.join(hf_cache_dir, "huggan___afh_qv2"),
-            split="train",
-            num_proc=num_proc,
-        )
-        .filter(lambda x: x == 0, input_columns="label")
-        .train_test_split(test_size=0.1, seed=0)[split]
-    )
-
-    return ds.map(
-        transform_fn, remove_columns=["image"], batched=True
-    ).with_format("torch")
-
-
-def get_uaec_dataset(
-    data_dir: str,
-    split: Literal["train", "test", "extras"] = "train",
-    target_class: Literal["bicycle", "bird"] | None = None,
-    tfs: transforms.Compose | None = None,
-) -> torchvision.datasets.ImageFolder:
-    ds = torchvision.datasets.ImageFolder(
-        root=pathlib.Path(data_dir) / split,
-        transform=tfs
-        or transforms.Compose(
-            [
-                transforms.Resize(256),
-                transforms.CenterCrop(
-                    256
-                ),  # causing wildly different model scores (see load tradesv2.ipynb)
-                transforms.ToTensor(),
-            ]
-        ),
-    )
-
-    if target_class is not None:
-        ds.samples = [
-            sample
-            for sample in ds.samples
-            if target_class in ds.classes[sample[1]]
-        ]
-
-    return ds
+LOGGER = logging.getLogger(__name__)
 
 
 class CIFAR10Unconditional(torchvision.datasets.CIFAR10):
@@ -341,27 +136,11 @@ def get_cifar100_dataset(
     indist_dataset = torchvision.datasets.CIFAR100(**kwargs)
     return indist_dataset
 
-def get_tinyimages_dataset_original(data_dir):
-    from GOOD.tiny_utils.tinyimages_80mn_loader import TinyImages
-    cifar10_transform = transforms.Compose(
-        [
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-        ]
-    )
-    dataset = TinyImages(
-        tiny_path=data_dir,
-        transform=cifar10_transform,
-        exclude_cifar=["H", "CEDA11"],
-    )
-    return dataset
-
 
 def get_tinyimages_dataset(
     data_dir,
     augm_type: str = "autoaugment_cutout",
-    tinyimages_loader: Literal["GOOD", "innout"] = "GOOD",
+    tinyimages_loader: str = "innout",
 ):
     if augm_type == "original":
         transform = transforms.Compose(
@@ -381,70 +160,158 @@ def get_tinyimages_dataset(
             config_dict=augm_config,
         )
 
-    if tinyimages_loader == "innout":
-        dataset = dl.TinyImagesDataset(
-            data_dir, transform, exclude_cifar=True, exclude_cifar10_1=True
-        )
-    elif tinyimages_loader == "GOOD":
-        dataset = TinyImages(
-            tiny_path=data_dir,
-            transform=transform,
-            exclude_cifar=["H", "CEDA11"],
-        )
-    else:
+    if tinyimages_loader != "innout":
         raise ValueError(f"Unknown tinyimages_loader: {tinyimages_loader}")
-    return dataset
 
-
-def get_afhq_dataset(
-    data_dir: str,
-    extra_transform: bool = False,
-):
-    if extra_transform:
-        img_size = 256
-        scale, ratio = (0.8, 1.0), (0.9, 1.1)
-        crop = transforms.RandomResizedCrop(img_size, scale=scale, ratio=ratio)
-        rand_crop = transforms.Lambda(
-            lambda x: crop(x) if random.random() < 0.5 else x
-        )
-        transform = transforms.Compose(
-            [
-                rand_crop,
-                transforms.Resize([img_size, img_size]),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-            ]
-        )
-    else:
-        transform = transforms.Compose(
-            [transforms.RandomHorizontalFlip(), transforms.ToTensor()]
-        )
-
-    return torchvision.datasets.ImageFolder(root=data_dir, transform=transform)
-
-
-def get_restrictedimagenet(data_dir: str):
-    # return torchvision.datasets.ImageFolder(
-    #     data_dir,
-    #     transforms.Compose([transforms.Resize((256, 256)), transforms.ToTensor()]))
-
-    # transform = transforms.Compose([transforms.RandomResizedCrop(256, scale=(0.7, 1.0), ratio=(0.9, 1.1), interpolation=2),
-    #                                 transforms.RandomHorizontalFlip(),
-    #                                 transforms.ToTensor()])
-    transform = transforms.Compose(
-        [transforms.RandomHorizontalFlip(), transforms.ToTensor()]
+    return dl.TinyImagesDataset(
+        data_dir, transform, exclude_cifar=True, exclude_cifar10_1=True
     )
-    return torchvision.datasets.ImageFolder(data_dir, transform)
 
 
-class RemapLabelsDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, label_offset):
-        self.dataset = dataset
-        self.label_offset = label_offset
+def get_indist_dataset(
+    config: DataConfig,
+    split: str = "train",
+    attack: bool = False,
+    augm_type: str = "autoaugment_cutout",
+):
+    """Get in-distribution dataset."""
+    match config.indist_dataset:
+        case "cifar10-conditional":
+            indist_dataset = get_cifar10_dataset(
+                data_dir=config.indist_ds_dir,
+                split=split,
+                conditional=True,
+                augm_type=augm_type,
+            )
+        case "cifar100-conditional":
+            indist_dataset = get_cifar100_dataset(
+                data_dir=config.indist_ds_dir,
+                split=split,
+                conditional=True,
+                augm_type=augm_type,
+            )
+        case "ImageNet":
+            LOGGER.info("Using ImageNet dataset")
 
-    def __getitem__(self, index):
-        data, label = self.dataset[index]
-        return data, label + self.label_offset
+            # Validate augmentation type for ImageNet
+            is_train = split == "train"
+            if is_train:
+                assert augm_type in ["madry", "generation_id", "generation_id_randomcrop", "none", "default"]
+            else:
+                assert augm_type in ["none", "test"]
 
-    def __len__(self):
-        return len(self.dataset)
+            transform = get_imageNet_augmentation(type=augm_type, out_size=224)
+            dataset_split = 'train' if split == 'train' else 'val'
+            indist_dataset = torchvision.datasets.ImageNet(
+                config.indist_ds_dir,
+                split=dataset_split,
+                transform=transform
+            )
+        case _:
+            raise ValueError(f"Unknown dataset: {config.indist_dataset}")
+
+    assert len(indist_dataset.classes) == config.num_classes
+    return indist_dataset
+
+
+def get_indist_dataloader(
+    config: DataConfig,
+    batch_size: int,
+    split: str = "train",
+    attack: bool = False,
+    shuffle: bool = True,
+    augm_type: str = "autoaugment_cutout",
+    balanced: bool = True,
+):
+    """Get in-distribution dataloader."""
+    dataset = get_indist_dataset(config, split=split, attack=attack, augm_type=augm_type)
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=config.num_workers,
+        persistent_workers=True,
+    )
+
+
+def get_outdist_dataset(
+    config: DataConfig,
+    split: str = "train",
+    augm_type_generation: str = "original",
+    tinyimages_loader: str = "innout",
+    openimages_max_samples: int | None = None,
+    openimages_augm: str | None = None,
+):
+    """Get out-distribution dataset."""
+    match config.outdist_dataset:
+        case "OpenImageO":
+            LOGGER.info("Using OpenImageO outdist dataset")
+
+            # Determine augmentation type
+            if openimages_augm is not None:
+                augm_type = openimages_augm
+                LOGGER.info(f"Using custom OpenImageO augmentation: {augm_type}")
+            else:
+                augm_type = "generation_od_randomcrop" if augm_type_generation == "generation_id_randomcrop" else "generation_od"
+
+            transform = get_imageNet_augmentation(type=augm_type, out_size=224)
+            dataset = torchvision.datasets.ImageFolder(config.outdist_std_dir, transform=transform)
+            original_size = len(dataset)
+
+            # Create random subset if max_samples is specified
+            if openimages_max_samples is not None and openimages_max_samples < len(dataset):
+                generator = torch.Generator()
+                generator.manual_seed(42)
+                indices = torch.randperm(len(dataset), generator=generator)[:openimages_max_samples].tolist()
+                outdist_dataset = torch.utils.data.Subset(dataset, indices)
+                LOGGER.info(f"OpenImageO dataset: Using {len(outdist_dataset)} samples out of {original_size} total samples")
+            else:
+                outdist_dataset = dataset
+                LOGGER.info(f"OpenImageO dataset: Using all {original_size} samples")
+
+        case "tinyimages":
+            if split != "train":
+                LOGGER.warning(
+                    f"TinyImages don't have a {split} split, using the train split instead"
+                )
+            outdist_dataset = get_tinyimages_dataset(
+                data_dir=config.outdist_std_dir,
+                augm_type=augm_type_generation,
+                tinyimages_loader=tinyimages_loader,
+            )
+        case _:
+            raise ValueError(f"Unknown outdist dataset: {config.outdist_dataset}")
+
+    return outdist_dataset
+
+
+def get_outdist_dataloader(
+    config: DataConfig,
+    batch_size: int,
+    split: str = "train",
+    shuffle: bool = True,
+    augm_type_generation: str = "original",
+    tinyimages_loader: str = "innout",
+    openimages_max_samples: int | None = None,
+    openimages_augm: str | None = None,
+):
+    """Get out-distribution dataloader."""
+    outdist_dataset = get_outdist_dataset(
+        config=config,
+        split=split,
+        augm_type_generation=augm_type_generation,
+        tinyimages_loader=tinyimages_loader,
+        openimages_max_samples=openimages_max_samples,
+        openimages_augm=openimages_augm,
+    )
+    return torch.utils.data.DataLoader(
+        outdist_dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=config.num_workers,
+        persistent_workers=True,
+    )

@@ -208,7 +208,7 @@ class TrainConfig:
     augm_type_generation: str = "original"
     mixup_alpha: int = 5
     mixup_beta: int = 1
-    tinyimages_loader: Literal["GOOD", "innout"] = "GOOD"
+    tinyimages_loader: str = "innout"
     use_batchnorm: bool = False
     use_layernorm: bool = True
     use_convstem: bool = True
@@ -559,126 +559,6 @@ class TrainConfig:
         best_model_path = os.path.join(wandb.run.dir, "model_bestacc.pth")
         rebm.training.misc.save_model(model, best_model_path)
 
-    def get_indist_dataset(
-        self,
-        split: str = "train",
-        attack: bool = False,
-        augm_type: str = "autoaugment_cutout",
-    ):
-        cfg = self.data
-        match cfg.indist_dataset:
-            case "cifar10-conditional":
-                indist_dataset = rebm.training.data.get_cifar10_dataset(
-                    data_dir=cfg.indist_ds_dir,
-                    split=split,
-                    conditional=True,
-                    augm_type=augm_type,
-                )
-            case "cifar100-conditional":
-                indist_dataset = rebm.training.data.get_cifar100_dataset(
-                    data_dir=cfg.indist_ds_dir,
-                    split=split,
-                    conditional=True,
-                    augm_type=augm_type,
-                )
-            case "ImageNet":
-                LOGGER.info("Using ImageNet dataset")
-
-                # Validate augmentation type for ImageNet
-                is_train = split == "train"
-                if is_train:
-                    assert augm_type in ["madry", "generation_id", "generation_id_randomcrop", "none", "default"]
-                else:
-                    assert augm_type in ["none", "test"]
-
-                transform = get_imageNet_augmentation(type=augm_type, out_size=224)
-                dataset_split = 'train' if split == 'train' else 'val'
-                indist_dataset = datasets.ImageNet(
-                    cfg.indist_ds_dir,
-                    split=dataset_split,
-                    transform=transform
-                )
-            case _:
-                raise ValueError(f"Unknown dataset: {cfg.indist_dataset}")
-        assert len(indist_dataset.classes) == self.data.num_classes
-        return indist_dataset
-
-    def get_indist_dataloader(
-        self,
-        split: str = "train",
-        attack: bool = False,
-        shuffle: bool = True,
-        augm_type: str = "autoaugment_cutout",
-        balanced=True,
-    ):
-        dataset = self.get_indist_dataset(
-            split=split, attack=attack, augm_type=augm_type
-        )
-        return torch.utils.data.DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=shuffle,
-            drop_last=True,
-            pin_memory=True,
-            num_workers=self.data.num_workers,
-            persistent_workers=True,
-        )
-
-    def get_outdist_dataset(self, split="train"):
-        cfg = self.data
-        match cfg.outdist_dataset:
-            case "OpenImageO":
-                LOGGER.info("Using OpenImageO outdist dataset")
-
-                # Determine augmentation type
-                if self.openimages_augm is not None:
-                    augm_type = self.openimages_augm
-                    LOGGER.info(f"Using custom OpenImageO augmentation: {augm_type}")
-                else:
-                    augm_type = "generation_od_randomcrop" if self.augm_type_generation == "generation_id_randomcrop" else "generation_od"
-
-                transform = get_imageNet_augmentation(type=augm_type, out_size=224)
-                dataset = datasets.ImageFolder(cfg.outdist_std_dir, transform=transform)
-                original_size = len(dataset)
-
-                # Create random subset if max_samples is specified
-                if self.openimages_max_samples is not None and self.openimages_max_samples < len(dataset):
-                    generator = torch.Generator()
-                    generator.manual_seed(42)
-                    indices = torch.randperm(len(dataset), generator=generator)[:self.openimages_max_samples].tolist()
-                    outdist_dataset = torch.utils.data.Subset(dataset, indices)
-                    LOGGER.info(f"OpenImageO dataset: Using {len(outdist_dataset)} samples out of {original_size} total samples")
-                else:
-                    outdist_dataset = dataset
-                    LOGGER.info(f"OpenImageO dataset: Using all {original_size} samples")
-
-            case "tinyimages":
-                if split != "train":
-                    LOGGER.warning(
-                        f"TinyImages don't have a {split} split, using the train split instead"
-                    )
-                outdist_dataset = rebm.training.data.get_tinyimages_dataset(
-                    data_dir=cfg.outdist_std_dir,
-                    augm_type=self.augm_type_generation,
-                    tinyimages_loader=self.tinyimages_loader,
-                )
-            case _:
-                raise ValueError(
-                    f"Unknown outdist dataset: {cfg.outdist_dataset}"
-                )
-        return outdist_dataset
-
-    def get_outdist_dataloader(self, split="train", shuffle=True):
-        outdist_dataset = self.get_outdist_dataset(split=split)
-        return torch.utils.data.DataLoader(
-            outdist_dataset,
-            batch_size=self.batch_size,
-            shuffle=shuffle,
-            drop_last=True,
-            pin_memory=True,
-            num_workers=self.data.num_workers,
-            persistent_workers=True,
-        )
 
 
 @dataclasses.dataclass
@@ -1141,7 +1021,9 @@ def train(cfg: TrainConfig):
         model.eval()  # Ensure model is in evaluation mode
 
         # Create data loader specifically for counterfactual generation
-        train_loader_for_counterfactuals = cfg.get_indist_dataloader(
+        train_loader_for_counterfactuals = rebm.training.data.get_indist_dataloader(
+            config=cfg.data,
+            batch_size=cfg.batch_size,
             split='train',
             shuffle=False,
             augm_type="none",  # No augmentation for clean reference images
@@ -1161,7 +1043,9 @@ def train(cfg: TrainConfig):
         model.eval()  # Ensure model is in evaluation mode
 
         # Create data loaders for in-distribution and out-of-distribution data
-        indist_loader = cfg.get_indist_dataloader(
+        indist_loader = rebm.training.data.get_indist_dataloader(
+            config=cfg.data,
+            batch_size=cfg.batch_size,
             split='test',
             shuffle=False,
             augm_type="none",  # No augmentation for clean evaluation
@@ -1236,15 +1120,29 @@ def train(cfg: TrainConfig):
     classification_metrics = ClassificationMetrics()
 
     # Create data loaders
-    train_indist_loader = cfg.get_indist_dataloader(
-        shuffle=True, augm_type=cfg.augm_type_generation
+    train_indist_loader = rebm.training.data.get_indist_dataloader(
+        config=cfg.data,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        augm_type=cfg.augm_type_generation
     )
-    train_indist_loader_xent = cfg.get_indist_dataloader(
-        shuffle=True, augm_type=cfg.augm_type_classification
+    train_indist_loader_xent = rebm.training.data.get_indist_dataloader(
+        config=cfg.data,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        augm_type=cfg.augm_type_classification
     )
     train_indist_iter = infinite_iter(train_indist_loader)
     train_indist_iter_xent = infinite_iter(train_indist_loader_xent)
-    train_outdist_iter = infinite_iter(cfg.get_outdist_dataloader(shuffle=True))
+    train_outdist_iter = infinite_iter(rebm.training.data.get_outdist_dataloader(
+        config=cfg.data,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        augm_type_generation=cfg.augm_type_generation,
+        tinyimages_loader=cfg.tinyimages_loader,
+        openimages_max_samples=cfg.openimages_max_samples,
+        openimages_augm=cfg.openimages_augm,
+    ))
     # test_indist_iter = infinite_iter(
     #     cfg.get_indist_dataloader(split="val", shuffle=True)
     # )
@@ -1280,16 +1178,28 @@ def train(cfg: TrainConfig):
     )
 
     # Create evaluation dataloaders outside the training loop
-    train_loader_for_eval = cfg.get_indist_dataloader(
-        split="train", shuffle=False, augm_type="none"
+    train_loader_for_eval = rebm.training.data.get_indist_dataloader(
+        config=cfg.data,
+        batch_size=cfg.batch_size,
+        split="train",
+        shuffle=False,
+        augm_type="none"
     )
     if 'cifar' in cfg.data.indist_dataset:
-        test_loader_for_eval = cfg.get_indist_dataloader(
-            split="val", shuffle=False, augm_type="none"
+        test_loader_for_eval = rebm.training.data.get_indist_dataloader(
+            config=cfg.data,
+            batch_size=cfg.batch_size,
+            split="val",
+            shuffle=False,
+            augm_type="none"
         )
     else:
-        test_loader_for_eval = cfg.get_indist_dataloader(
-            split="val", shuffle=False, augm_type="test"
+        test_loader_for_eval = rebm.training.data.get_indist_dataloader(
+            config=cfg.data,
+            batch_size=cfg.batch_size,
+            split="val",
+            shuffle=False,
+            augm_type="test"
         )
 
     LOGGER.info(
