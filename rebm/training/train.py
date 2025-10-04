@@ -153,7 +153,6 @@ class TrainConfig:
     attack: AttackConfig
     model: BaseModelConfig
     image_log: ImageLogConfig
-    config_path: str
 
     # Optimization parameters
     resume_path: Optional[str]  # Path to resume training from checkpoint
@@ -236,8 +235,6 @@ class TrainConfig:
     def from_yaml(cls, yaml_path: str) -> "TrainConfig":
         with open(yaml_path, "r") as f:
             config_dict = yaml.safe_load(f)
-
-        config_dict["config_path"] = yaml_path
         # Create nested configs
         data = DataConfig(**config_dict.get("data", {}))
         attack = AttackConfig(**config_dict.get("attack", {}))
@@ -317,14 +314,7 @@ class TrainConfig:
 
         if self.wandb_dir is None:
             self.wandb_dir = "./"
-        if self.image_log.save_dir is None:
-            # Create short directory names to avoid filesystem limits
-            # Use hash of the full config path to ensure uniqueness
-            random_suffix = uuid.uuid4().hex  # 32 random hex chars
-            config_hash = hashlib.md5(
-                (str(self.config_path) + random_suffix).encode("utf-8")
-            ).hexdigest()[:8]
-            self.image_log.save_dir = f"{self.wandb_dir}/eval_fid/{config_hash}"
+        # Note: image_log.save_dir will be set later after wandb.init() using wandb run ID
         if (
             self.optimizer == "sgd"
             and self.total_epochs is None
@@ -1687,6 +1677,11 @@ if __name__ == "__main__":
         mode="disabled" if cfg.wandb_disabled else "online",
         name=run_name,
     )
+
+    # Set image_log.save_dir using wandb run ID if not specified
+    if cfg.image_log.save_dir is None:
+        cfg.image_log.save_dir = f"{cfg.wandb_dir}/eval_fid/{wandb.run.id}"
+
     print(recursive_asdict(cfg))
     wandb.config.update(recursive_asdict(cfg))
     LOGGER.info(f"Using device: {cfg.device}")
