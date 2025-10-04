@@ -231,47 +231,6 @@ class TrainConfig:
     def dtype(self) -> torch.dtype:
         return torch.float16 if self.fp16 else torch.float32
 
-    @classmethod
-    def from_yaml(cls, yaml_path: str) -> "TrainConfig":
-        with open(yaml_path, "r") as f:
-            config_dict = yaml.safe_load(f)
-        # Create nested configs
-        data = DataConfig(**config_dict.get("data", {}))
-        attack = AttackConfig(**config_dict.get("attack", {}))
-        indist_attack = None
-        if "indist_attack" in config_dict:
-            indist_attack = AttackConfig(**config_dict.get("indist_attack", {}))
-        indist_attack_xent = None
-        if "indist_attack_xent" in config_dict:
-            indist_attack_xent = AttackConfig(
-                **config_dict.get("indist_attack_xent", {})
-            )
-        model = create_model_config(
-            config_dict.get("model", {})
-        )  # Use factory function
-        image_log = ImageLogConfig(**config_dict.get("image_log", {}))
-
-        # Remove nested configs from main dict
-        for key in [
-            "data",
-            "attack",
-            "indist_attack",
-            "indist_attack_xent",
-            "model",
-            "image_log",
-        ]:
-            config_dict.pop(key, None)
-
-        return cls(
-            data=data,
-            attack=attack,
-            indist_attack=indist_attack,
-            indist_attack_xent=indist_attack_xent,
-            model=model,
-            image_log=image_log,
-            **config_dict,
-        )
-
     def should_trigger_event(
         self,
         global_step_one_indexed: int,
