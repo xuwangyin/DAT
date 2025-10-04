@@ -1616,39 +1616,29 @@ def train(cfg: TrainConfig):
 
 if __name__ == "__main__":
     import sys
+    from rebm.training.config_classes import DataConfig, AttackConfig, ImageLogConfig, create_model_config
 
     # Parse arguments
     args = sys.argv[1:]
-    config_file = None
-    overrides = []
 
-    i = 0
-    while i < len(args):
-        if args[i] == '--config':
-            if i + 1 < len(args):
-                config_file = args[i + 1]
-                i += 2
-            else:
-                raise ValueError("--config requires a file path")
-        elif args[i] in ['-h', '--help']:
-            print("Training script with OmegaConf for configuration management")
-            print("\nUsage: python -m rebm.training.train --config CONFIG_FILE [KEY=VALUE ...]")
-            print("\nExamples:")
-            print("  # Basic usage")
-            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml")
-            print("\n  # Override top-level fields")
-            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml batch_size=256 lr=0.001")
-            print("\n  # Override nested fields (use dot notation)")
-            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth")
-            print("  python -m rebm.training.train --config experiments/cifar10/config.yaml image_log.num_steps=50 attack.max_steps=100")
-            sys.exit(0)
-        else:
-            # This is an override in KEY=VALUE format
-            overrides.append(args[i])
-            i += 1
+    if not args or args[0] in ['-h', '--help']:
+        print("Training script with OmegaConf for configuration management")
+        print("\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]")
+        print("\nExamples:")
+        print("  # Basic usage")
+        print("  python -m rebm.training.train experiments/cifar10/config.yaml")
+        print("\n  # Override top-level fields")
+        print("  python -m rebm.training.train experiments/cifar10/config.yaml batch_size=256 lr=0.001")
+        print("\n  # Override nested fields (use dot notation)")
+        print("  python -m rebm.training.train experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth")
+        print("  python -m rebm.training.train experiments/cifar10/config.yaml image_log.num_steps=50 attack.max_steps=100")
+        sys.exit(0)
 
-    if config_file is None:
-        raise ValueError("--config argument is required. Use --help for usage information.")
+    # First argument is the config file
+    config_file = args[0]
+
+    # Remaining arguments are overrides
+    overrides = args[1:]
 
     # Load YAML config with OmegaConf
     omega_cfg = OmegaConf.load(config_file)
@@ -1658,8 +1648,21 @@ if __name__ == "__main__":
         override_cfg = OmegaConf.from_dotlist(overrides)
         omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
 
-    # Convert to dict and create TrainConfig
+    # Convert to dict and create nested config objects
     config_dict = OmegaConf.to_container(omega_cfg, resolve=True)
+
+    # Create nested configs manually to ensure proper types
+    config_dict['data'] = DataConfig(**config_dict.get('data', {}))
+    config_dict['attack'] = AttackConfig(**config_dict.get('attack', {}))
+    config_dict['model'] = create_model_config(config_dict.get('model', {}))
+    config_dict['image_log'] = ImageLogConfig(**config_dict.get('image_log', {}))
+
+    # Handle optional attack configs
+    if 'indist_attack' in config_dict and config_dict['indist_attack'] is not None:
+        config_dict['indist_attack'] = AttackConfig(**config_dict['indist_attack'])
+    if 'indist_attack_xent' in config_dict and config_dict['indist_attack_xent'] is not None:
+        config_dict['indist_attack_xent'] = AttackConfig(**config_dict['indist_attack_xent'])
+
     cfg = TrainConfig(**config_dict)
 
     # Don't upload .pth files to wandb, since they are big

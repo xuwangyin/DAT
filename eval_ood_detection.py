@@ -90,14 +90,14 @@ def submit_job(
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
-    # Construct the command parts
+    # Construct the command with new positional config + KEY=VALUE format
     python_cmd_parts = [
         python_bin, "-m", "rebm.training.train",
-        "--config", template_config,
-        "--ckpt_path", str(ckpt_path),
-        "--evaluate_ood_detection",
-        "--outdist_dataset_ood_detection", ood_dataset,
-        "--model_type", model_type
+        template_config,  # Positional config file argument
+        f"model.ckpt_path={ckpt_path}",
+        "evaluate_ood_detection=True",
+        f"outdist_dataset_ood_detection={ood_dataset}",
+        f"model.model_type={model_type}"
     ]
 
     # Check if slurm is available and not forced to use local

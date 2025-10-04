@@ -103,20 +103,20 @@ def submit_job(
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
     
-    # Construct the command
+    # Construct the command with new positional config + KEY=VALUE format
     python_cmd_parts = [
         python_bin, "-m", "rebm.training.train",
-        "--config", template_config,
-        "--ckpt_path", str(ckpt_path),
-        "--image_log_num_samples", "50000",
-        "--image_log_num_steps", str(num_steps),
-        "--batch_size", str(batch_size),
-        "--model_type", model_type
+        template_config,  # Positional config file argument
+        f"model.ckpt_path={ckpt_path}",
+        f"image_log.num_samples=50000",
+        f"image_log.num_steps={num_steps}",
+        f"batch_size={batch_size}",
+        f"model.model_type={model_type}"
     ]
 
     # Add unconditional generation flag if specified
     if unconditional:
-        python_cmd_parts.append("--logsumexp_sampling")
+        python_cmd_parts.append("logsumexp_sampling=True")
 
     # Check if slurm is available and not forced to use local
     if partition == 'local':
