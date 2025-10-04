@@ -193,8 +193,6 @@ class TrainConfig:
         False  # When true, sample additional clean data and compute xent
     )
     fp16: bool = False
-    mixup_outdist: bool = False
-    mixup_indist: bool = False
     samples_per_attack_step: int | None = None
     n_imgs_per_classification_log: int | None = None
     use_ema: bool = (
@@ -203,7 +201,6 @@ class TrainConfig:
 
     # Evaluation parameters
     robust_eval: bool = True  # Whether to perform robust evaluation
-    calibration_eval: bool = False  # Whether to perform calibration evaluation
     indist_perturb: bool = False
     indist_perturb_steps: int = 10
     indist_perturb_eps: float = 0.5
@@ -211,8 +208,6 @@ class TrainConfig:
     augm_type_generation: str = "original"
     mixup_alpha: int = 5
     mixup_beta: int = 1
-    mixin: bool = False
-    cutout: bool = False
     tinyimages_loader: Literal["GOOD", "innout"] = "GOOD"
     use_batchnorm: bool = False
     use_layernorm: bool = True
@@ -725,10 +720,6 @@ class TrainingMetrics(Metrics):
     xent_indist: torch.Tensor | None = None
     xent_outdist: torch.Tensor | None = None
     xent_adv: torch.Tensor | None = None
-
-    r1_in: torch.Tensor | None = None
-    r1_out: torch.Tensor | None = None
-    r1_adv: torch.Tensor | None = None
 
     l2_dist_relative: float | None = None
 
@@ -1505,25 +1496,6 @@ def train(cfg: TrainConfig):
                         f"Robust Acc - Train: {metrics_dict['robust_train_acc']}, Test: {metrics_dict['robust_test_acc']:.4f}"
                     )
 
-                # Optionally evaluate with calibration
-                if cfg.calibration_eval:
-                    # Full calibration evaluation
-                    LOGGER.info("Evaluating with calibration...")
-                    # Get datasets for calibration
-                    (
-                        calibrated_model,
-                        metrics_dict["train_acc_calib"],
-                        metrics_dict["test_acc_calib"],
-                    ) = eval_calibration(
-                        model=eval_model,
-                        train_set=cfg.get_indist_dataset(split="train"),
-                        test_set=cfg.get_indist_dataset(split="val"),
-                        device=cfg.device,
-                    )
-                    LOGGER.info(
-                        f"Calibrated Acc - Train: {metrics_dict['train_acc_calib']:.4f}, Test: {metrics_dict['test_acc_calib']:.4f}"
-                    )
-
                 # Update all metrics using dictionary unpacking
                 is_new_best_acc = classification_metrics.update(**metrics_dict)
                 if is_new_best_acc:
@@ -1544,89 +1516,6 @@ def train(cfg: TrainConfig):
             )
             train_indist_imgs = train_indist_batch[0].to(cfg.device)
             train_indist_labels = train_indist_batch[1]
-
-            # Fetch in-distribution images for mixup if needed
-            if cfg.mixup_outdist:
-                train_indist_imgs_for_mixup = next(train_indist_iter)[0].to(
-                    train_outdist_imgs.device
-                )
-                beta_dist = torch.distributions.Beta(
-                    cfg.mixup_alpha, cfg.mixup_beta
-                )
-                coefs = beta_dist.sample(
-                    (train_outdist_imgs.shape[0], 1, 1, 1)
-                ).to(train_outdist_imgs.device)
-                train_outdist_imgs = (
-                    train_outdist_imgs * coefs
-                    + train_indist_imgs_for_mixup * (1 - coefs)
-                )
-            if cfg.mixup_indist:
-                train_outdist_imgs_for_mixup = next(train_outdist_iter)[0].to(
-                    train_indist_imgs.device
-                )
-                beta_dist = torch.distributions.Beta(
-                    cfg.mixup_alpha, cfg.mixup_beta
-                )
-                coefs = beta_dist.sample(
-                    (train_indist_imgs.shape[0], 1, 1, 1)
-                ).to(train_indist_imgs.device)
-                train_indist_imgs = (
-                    train_indist_imgs * coefs
-                    + train_outdist_imgs_for_mixup * (1 - coefs)
-                )
-                # TODO update train_indist_labels to use soft labels
-            if cfg.mixin:
-                half_batch = train_outdist_imgs.shape[0] // 2
-                train_indist_imgs_for_mixin = next(train_indist_iter)[0].to(
-                    train_outdist_imgs.device
-                )[:half_batch]
-
-                # # NOTE that this does not have per-sample randomness
-                # crop_transform = v2.Compose([
-                #     v2.RandomResizedCrop(size=train_outdist_imgs.shape[2:]),
-                #     v2.ToDtype(torch.float32, scale=True),
-                # ])
-
-                crop_transform = K.RandomResizedCrop(
-                    size=train_indist_imgs_for_mixin.shape[2:],
-                    scale=(0.1, 0.5),
-                    ratio=(3 / 4, 4 / 3),
-                    resample="bilinear",
-                    same_on_batch=False,  # ensures per-sample randomness
-                )
-                indist_imgs_cropped = crop_transform(
-                    train_indist_imgs_for_mixin
-                )
-                # Randomly select indices to replace
-                indices_to_replace = torch.randperm(
-                    train_outdist_imgs.shape[0]
-                )[:half_batch].to(train_outdist_imgs.device)
-                train_outdist_imgs[indices_to_replace] = indist_imgs_cropped
-
-            if cfg.cutout:
-                assert train_indist_imgs.shape[2:] == (256, 256)
-                padding_size = int(4 * 256 / 32)
-                aug_sequence = K.AugmentationSequential(
-                    K.RandomCrop(
-                        p=0.8,
-                        size=(256, 256),
-                        padding=padding_size,
-                        same_on_batch=False,
-                    ),
-                    K.RandomErasing(
-                        p=0.8,
-                        scale=(0.1, 0.33),
-                        ratio=(0.8, 1.0),
-                        value=0.0,
-                        same_on_batch=False,  # Different erasing for each image in the batch
-                    ),
-                    data_keys=[
-                        "input"
-                    ],  # Specify that these augmentations apply to the input
-                )
-                if train_outdist_imgs is not None:
-                    train_outdist_imgs = aug_sequence(train_outdist_imgs)
-                train_indist_imgs = aug_sequence(train_indist_imgs)
 
             optimizer.zero_grad()
             if cfg.indist_train_only:

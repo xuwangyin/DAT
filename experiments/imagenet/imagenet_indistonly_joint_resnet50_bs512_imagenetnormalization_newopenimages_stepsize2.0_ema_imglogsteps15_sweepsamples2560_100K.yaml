@@ -81,7 +81,6 @@ wandb_project: "DAT"
 wandb_disabled: false
 tags: ['cifar100']
 fp16: false
-calibration_eval: false
 robust_eval: true
 augm_type_classification: "default"
 augm_type_generation: "generation_id"

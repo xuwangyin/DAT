@@ -76,7 +76,6 @@ wandb_project: "DAT"
 wandb_disabled: false
 tags: ['cifar10']
 fp16: false
-calibration_eval: false
 robust_eval: true
 augm_type_classification: "autoaugment_cutout"
 augm_type_generation: "original"
