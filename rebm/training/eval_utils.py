@@ -629,7 +629,38 @@ def eval_robust_acc(
     return robust_accuracy
 
 
+def generate_outdist_adv_images(
+    model, outdist_imgs, cfg, outdist_step, indist_labels=None
+):
+    """Generate adversarial images from out-of-distribution samples."""
+    assert_no_grad(model)
+    assert not model.training
+
+    if indist_labels is not None:
+        attack_labels = indist_labels
+    else:
+        assert False
+        attack_labels = torch.randint(
+            0,
+            cfg.data.num_classes,
+            (outdist_imgs.size(0),),
+        )
+
+    adv_imgs = generate_images(
+        num_steps=outdist_step,
+        model=model,
+        x=outdist_imgs,
+        attack_labels=attack_labels,
+        logsumexp=cfg.logsumexp_sampling,
+        **vars(cfg.attack),
+    )
+    assert not adv_imgs.requires_grad
+    assert_no_grad(model)
+    return adv_imgs, attack_labels
+
+
 def generate_indist_adv_images(model, indist_imgs, indist_labels, cfg):
+    """Generate adversarial images from in-distribution samples."""
     assert_no_grad(model)
     assert not model.training
     # Generate adversarial images from in-distribution samples

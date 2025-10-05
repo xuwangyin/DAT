@@ -1,0 +1,408 @@
+"""Metrics computation and tracking for training and evaluation."""
+
+import dataclasses
+from typing import TYPE_CHECKING, Callable
+
+import einops
+import torch
+from torch import nn
+
+import rebm.training.misc
+from rebm.training.adv_attacks import pgd_attack, pgd_attack_xent
+from rebm.training.eval_utils import (
+    compute_img_diff,
+    generate_indist_adv_images,
+    generate_outdist_adv_images,
+    get_auc,
+)
+from rebm.utils import assert_no_grad
+
+if TYPE_CHECKING:
+    from rebm.training.train import TrainConfig
+
+
+@dataclasses.dataclass
+class Metrics:
+    clean_auc: float
+    adv_auc: float
+    indist_adv_auc: float | None = None
+    indist_clean_auc: float | None = None
+
+    def to_simple_dict(self) -> dict[str, float]:
+        ret_dict = dict()
+        for field in dataclasses.fields(self):
+            key = field.name
+            val = getattr(self, key)
+            if val is None:
+                continue
+
+            if torch.is_tensor(val):
+                if val.numel() == 1:
+                    ret_dict[key] = val.item()
+                continue
+
+            ret_dict[key] = val
+
+        return ret_dict
+
+
+@dataclasses.dataclass
+class TrainingMetrics(Metrics):
+    xent: torch.Tensor | None = None
+    loss: torch.Tensor | None = None
+    r1: torch.Tensor | None = None
+
+    indist_imgs: torch.Tensor | None = None
+    outdist_imgs_clean: torch.Tensor | None = None
+    adv_imgs: torch.Tensor | None = None
+    outdist_imgs_error: torch.Tensor | None = None
+
+    xent_indist: torch.Tensor | None = None
+    xent_outdist: torch.Tensor | None = None
+    xent_adv: torch.Tensor | None = None
+
+    l2_dist_relative: float | None = None
+
+
+@dataclasses.dataclass
+class ImageGenerationMetrics:
+    """Class to track image generation metrics including FID scores and generated images."""
+
+    fid: float | None = None
+    gen_imgs: torch.Tensor | None = None
+    best_fid: float = float("inf")
+
+    def update(self, fid: float | None, gen_imgs: torch.Tensor | None) -> bool:
+        self.fid = fid
+        self.gen_imgs = gen_imgs
+
+        # Check if we have a new best FID
+        new_best = False
+        if fid is not None and fid < self.best_fid:
+            self.best_fid = fid
+            new_best = True
+
+        return new_best
+
+
+@dataclasses.dataclass
+class ClassificationMetrics:
+    """Class to track classification metrics including training and test accuracy before and after calibration."""
+
+    # Standard (pre-calibration) metrics
+    train_acc: float | None = None
+    test_acc: float | None = None
+
+    # Post-calibration metrics
+    train_acc_calib: float | None = None
+    test_acc_calib: float | None = None
+
+    # Robust accuracy metrics
+    robust_train_acc: float | None = None
+    robust_test_acc: float | None = None
+
+    # Best metrics tracking
+    best_train_acc: float | None = None
+    best_test_acc: float | None = None
+    best_test_acc_calib: float | None = None
+    best_robust_test_acc: float | None = None
+
+    def update(
+        self,
+        *,  # Force keyword arguments
+        train_acc: float,
+        test_acc: float,
+        train_acc_calib: float | None = None,
+        test_acc_calib: float | None = None,
+        robust_train_acc: float | None = None,
+        robust_test_acc: float | None = None,
+    ) -> bool:
+        # Update standard (pre-calibration) metrics
+        self.train_acc = train_acc
+        self.test_acc = test_acc
+
+        # Update post-calibration metrics
+        self.train_acc_calib = train_acc_calib
+        self.test_acc_calib = test_acc_calib
+
+        # Update robust accuracy metrics
+        if robust_train_acc is not None:
+            self.robust_train_acc = robust_train_acc
+        if robust_test_acc is not None:
+            self.robust_test_acc = robust_test_acc
+
+        # Update best standard accuracy
+        new_best = False
+        # if self.best_test_acc is None or test_acc > self.best_test_acc:
+        #     self.best_test_acc = test_acc
+        #     new_best = True
+
+        # Check if we have a new best robust test accuracy
+        if robust_test_acc is not None and (
+            self.best_robust_test_acc is None
+            or robust_test_acc > self.best_robust_test_acc
+        ):
+            self.best_robust_test_acc = robust_test_acc
+            new_best = True
+
+        # Check if we have a new best calibrated test accuracy
+        if test_acc_calib is not None and (
+            self.best_test_acc_calib is None
+            or test_acc_calib > self.best_test_acc_calib
+        ):
+            self.best_test_acc_calib = test_acc_calib
+
+        return new_best
+
+
+def compute_metrics(
+    model,
+    indist_imgs,
+    indist_labels,
+    adv_imgs,
+    outdist_imgs,
+    attack_labels,
+    indist_adv_imgs=None,
+    indist_attack_labels=None,
+):
+    """Compute AUC metrics with no gradient tracking."""
+    assert_no_grad(model)
+    assert not model.training
+
+    with torch.no_grad():
+        # Compute logits for mandatory inputs
+        inputs = torch.cat([indist_imgs, adv_imgs, outdist_imgs])
+        labels = torch.cat([indist_labels, attack_labels, attack_labels])
+
+        batch_logits = model(inputs, labels)
+        indist_logits, adv_logits, outdist_logits = torch.chunk(batch_logits, 3)
+
+        # Compute basic AUC metrics
+        auc_metrics = {
+            "adv_auc": get_auc(
+                pos=indist_logits.cpu().numpy(), neg=adv_logits.cpu().numpy()
+            ),
+            "clean_auc": get_auc(
+                pos=indist_logits.cpu().numpy(),
+                neg=outdist_logits.cpu().numpy(),
+            ),
+        }
+
+        # Compute optional in-distribution adversarial metrics if provided
+        if indist_adv_imgs is not None and indist_attack_labels is not None:
+            # Process additional inputs separately for clarity
+            inputs = torch.cat([indist_adv_imgs, indist_imgs])
+            labels = torch.cat([indist_attack_labels, indist_attack_labels])
+
+            batch_logits = model(inputs, labels)
+            indist_adv_logits, indist_abstain_logits = torch.chunk(
+                batch_logits, 2
+            )
+
+            # Add in-distribution adversarial AUC metrics
+            auc_metrics.update(
+                {
+                    "indist_adv_auc": get_auc(
+                        pos=indist_logits.cpu().numpy(),
+                        neg=indist_adv_logits.cpu().numpy(),
+                    ),
+                    "indist_clean_auc": get_auc(
+                        pos=indist_logits.cpu().numpy(),
+                        neg=indist_abstain_logits.cpu().numpy(),
+                    ),
+                }
+            )
+
+    # Ensure no gradients were accumulated
+    assert_no_grad(model)
+    return Metrics(**auc_metrics)
+
+
+def compute_training_metrics(
+    *,
+    indist_imgs: torch.Tensor,
+    indist_labels: torch.Tensor,
+    outdist_imgs: torch.Tensor,
+    outdist_step: int,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    model: nn.Module,
+    cfg: "TrainConfig",
+) -> TrainingMetrics:
+    """Compute metrics during training including loss, AUC, and R1 regularization."""
+    model.eval()
+    adv_imgs, attack_labels = generate_outdist_adv_images(
+        model, outdist_imgs, cfg, outdist_step, indist_labels=indist_labels
+    )
+
+    indist_adv_imgs, indist_attack_labels = None, None
+    if cfg.indist_attack is not None:
+        indist_adv_imgs, indist_attack_labels = generate_indist_adv_images(
+            model, indist_imgs, indist_labels, cfg
+        )
+
+    if cfg.indist_perturb:
+        indist_imgs = pgd_attack(
+            model,
+            indist_imgs,
+            norm="L2",
+            eps=cfg.indist_perturb_eps,
+            step_size=cfg.attack.step_size,
+            steps=cfg.indist_perturb_steps,
+            attack_labels=indist_labels,
+            descent=True,
+        )
+
+    l2_dist = (
+        torch.norm(
+            einops.rearrange(adv_imgs - outdist_imgs, "b ... -> b (...)"), dim=1
+        )
+        .mean()
+        .item()
+    )
+    l2_dist_relative = (
+        1
+        if outdist_step == 0
+        else l2_dist / (outdist_step * cfg.attack.step_size)
+    )
+
+    metrics = compute_metrics(
+        model,
+        indist_imgs,
+        indist_labels,
+        adv_imgs,
+        outdist_imgs,
+        attack_labels,
+        indist_adv_imgs,
+        indist_attack_labels,
+    )
+
+    indist_target = torch.ones(indist_imgs.shape[0]).to(indist_imgs.device)
+    adv_target = torch.zeros(indist_imgs.shape[0]).to(indist_imgs.device)
+
+    model.train()
+    if cfg.r1reg > 0:
+        indist_imgs.requires_grad_()
+        if cfg.logsumexp:
+            indist_logits = torch.logsumexp(model(x=indist_imgs, y=None), dim=1)
+        else:
+            indist_logits = model(x=indist_imgs, y=indist_labels)
+        r1 = rebm.training.misc.r1_reg(indist_logits, indist_imgs)
+    else:
+        r1 = 0
+        if cfg.logsumexp:
+            indist_logits = torch.logsumexp(model(x=indist_imgs, y=None), dim=1)
+        else:
+            indist_logits = model(x=indist_imgs, y=indist_labels)
+
+    if cfg.indist_attack is not None and cfg.indist_attack_only:
+        # Only use in-distribution adversarial examples
+        indist_adv_logits = model(indist_adv_imgs, indist_attack_labels)
+        logits = torch.cat([indist_logits, indist_adv_logits])
+        targets = torch.cat([indist_target, adv_target])
+    elif cfg.indist_attack is not None:
+        # Use both in-distribution and out-of-distribution adversarial examples
+        adv_input = torch.cat([adv_imgs, indist_adv_imgs])
+        adv_labels = torch.cat([attack_labels, indist_attack_labels])
+        adv_output = model(adv_input, adv_labels)
+        adv_logits, indist_adv_logits = torch.chunk(adv_output, 2)
+        logits = torch.cat([indist_logits, adv_logits, indist_adv_logits])
+        targets = torch.cat([indist_target, adv_target, adv_target])
+    else:
+        # Only use out-of-distribution adversarial examples
+        if cfg.logsumexp:
+            adv_logits = torch.logsumexp(model(adv_imgs, y=None), dim=1)
+        else:
+            adv_logits = model(adv_imgs, attack_labels)
+        logits = torch.cat([indist_logits, adv_logits])
+        targets = torch.cat([indist_target, adv_target])
+
+    xent = criterion(logits, targets)
+    loss = xent + cfg.r1reg * r1
+
+    ret_metrics_dict = dict(
+        loss=loss,
+        xent=xent.detach().item(),
+        r1=r1.detach().item() if isinstance(r1, torch.Tensor) else r1,
+        l2_dist_relative=l2_dist_relative,
+        indist_imgs=indist_imgs.detach(),
+        outdist_imgs_clean=outdist_imgs,
+        adv_imgs=adv_imgs.detach(),
+        outdist_imgs_error=compute_img_diff(adv_imgs, outdist_imgs).detach(),
+        **metrics.to_simple_dict(),
+    )
+
+    return TrainingMetrics(**ret_metrics_dict)
+
+
+def compute_training_metrics_xent(
+    *,
+    indist_imgs: torch.Tensor,
+    indist_labels: torch.Tensor,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    model: nn.Module,
+    cfg: "TrainConfig",
+    indist_samples_extra: torch.Tensor = None,
+    indist_labels_extra: torch.Tensor = None,
+) -> torch.Tensor:
+    """Compute cross-entropy loss on adversarial in-distribution examples."""
+    assert (
+        cfg.indist_attack_xent.max_steps
+        == cfg.indist_attack_xent.fixed_steps
+        == cfg.indist_attack_xent.start_step
+    )
+    indist_adv_imgs = pgd_attack_xent(
+        model,
+        indist_imgs,
+        indist_labels,
+        norm="L2",
+        eps=cfg.indist_attack_xent.eps,
+        step_size=cfg.indist_attack_xent.step_size,
+        steps=cfg.indist_attack_xent.max_steps,
+    )
+    indist_adv_logits = model(indist_adv_imgs)
+
+    # Base loss from adversarial samples
+    loss = criterion(indist_adv_logits, indist_labels)
+
+    if indist_samples_extra is not None and indist_labels_extra is not None:
+        indist_clean_logits = model(indist_samples_extra)
+        loss_clean = criterion(indist_clean_logits, indist_labels_extra)
+        loss = loss + loss_clean * 0.1
+
+    return loss
+
+
+def compute_testing_metrics(
+    *,
+    indist_imgs: torch.Tensor,
+    indist_labels: torch.Tensor,
+    outdist_imgs: torch.Tensor,
+    outdist_step: int,
+    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    model: nn.Module,
+    cfg: "TrainConfig",
+) -> Metrics:
+    """Compute metrics during testing/evaluation."""
+    assert not model.training
+    assert indist_labels.dtype == torch.long
+
+    adv_imgs, attack_labels = generate_outdist_adv_images(
+        model, outdist_imgs, cfg, outdist_step, indist_labels=indist_labels
+    )
+
+    indist_adv_imgs, indist_attack_labels = None, None
+    if cfg.indist_attack is not None:
+        indist_adv_imgs, indist_attack_labels = generate_indist_adv_images(
+            model, indist_imgs, indist_labels, cfg
+        )
+
+    return compute_metrics(
+        model,
+        indist_imgs,
+        indist_labels,
+        adv_imgs,
+        outdist_imgs,
+        attack_labels,
+        indist_adv_imgs,
+        indist_attack_labels,
+    )
