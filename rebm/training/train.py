@@ -7,30 +7,22 @@ from timm.models.resnet import wide_resnet50_4 as WideResNet50x4ImageNet
 from timm.models.convnext import convnext_tiny, convnext_base, convnext_small, convnext_large
 
 import collections
-import copy
 import dataclasses
-import hashlib
-import json
 import logging
 import math
 import os
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-import uuid
-from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Optional, Tuple
+from typing import Iterable
 
 import einops
 # import kornia.augmentation as K
-from omegaconf import OmegaConf
 import numpy as np
 import torch
 import torch.utils.data
 import torchvision.utils
 import wandb
-import yaml
 from timm.models.layers import trunc_normal_
 from torch import nn
 from torchvision import datasets
@@ -61,14 +53,7 @@ from rebm.training.metrics import (
 from rebm.training.scheduling import get_lr_for_epoch, should_trigger_event
 from rebm.training.average_model import AveragedModel
 from rebm.training.calibration import eval_calibration
-from rebm.training.config_classes import (
-    AttackConfig,
-    BaseModelConfig,
-    DataConfig,
-    ImageLogConfig,
-    TrainConfig,
-    create_model_config,
-)
+from rebm.training.config_classes import TrainConfig, load_train_config
 from rebm.training.eval_utils import (
     compute_img_diff,
     eval_acc,
@@ -80,7 +65,6 @@ from rebm.training.eval_utils import (
     get_auc,
     log_generation,
 )
-from rebm.training.ood import run_ood_evaluation
 from rebm.utils import assert_no_grad, load_state_dict, remap_checkpoint_keys
 from rebm.training.utils_architecture import replace_convstem
 
@@ -137,11 +121,6 @@ def train(cfg: TrainConfig):
         LOGGER.info("Counterfactual generation completed. Exiting.")
         return
         
-    # Perform OOD detection evaluation if requested
-    if cfg.evaluate_ood_detection:
-        run_ood_evaluation(cfg)
-        return
-
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
 
@@ -635,55 +614,29 @@ def train(cfg: TrainConfig):
 
 if __name__ == "__main__":
     import sys
-    from rebm.training.config_classes import DataConfig, AttackConfig, ImageLogConfig, create_model_config
 
-    # Parse arguments
     args = sys.argv[1:]
 
-    if not args or args[0] in ['-h', '--help']:
+    if not args or args[0] in ["-h", "--help"]:
         print("Training script with OmegaConf for configuration management")
         print("\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]")
         print("\nExamples:")
-        print("  # Basic usage")
         print("  python -m rebm.training.train experiments/cifar10/config.yaml")
-        print("\n  # Override top-level fields")
-        print("  python -m rebm.training.train experiments/cifar10/config.yaml batch_size=256 lr=0.001")
-        print("\n  # Override nested fields (use dot notation)")
-        print("  python -m rebm.training.train experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth")
-        print("  python -m rebm.training.train experiments/cifar10/config.yaml image_log.num_steps=50 attack.max_steps=100")
+        print(
+            "  python -m rebm.training.train experiments/cifar10/config.yaml batch_size=256 lr=0.001"
+        )
+        print(
+            "  python -m rebm.training.train experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth"
+        )
+        print(
+            "  python -m rebm.training.train experiments/cifar10/config.yaml image_log.num_steps=50 attack.max_steps=100"
+        )
         sys.exit(0)
 
-    # First argument is the config file
     config_file = args[0]
-
-    # Remaining arguments are overrides
     overrides = args[1:]
 
-    # Load YAML config with OmegaConf
-    omega_cfg = OmegaConf.load(config_file)
-
-    # Apply overrides using OmegaConf's dotlist
-    if overrides:
-        override_cfg = OmegaConf.from_dotlist(overrides)
-        omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
-
-    # Convert configs to plain containers for logging and dataclass instantiation
-    config_for_wandb = OmegaConf.to_container(omega_cfg, resolve=True)
-    config_dict = copy.deepcopy(config_for_wandb)
-
-    # Create nested configs manually to ensure proper types
-    config_dict['data'] = DataConfig(**config_dict.get('data', {}))
-    config_dict['attack'] = AttackConfig(**config_dict.get('attack', {}))
-    config_dict['model'] = create_model_config(config_dict.get('model', {}))
-    config_dict['image_log'] = ImageLogConfig(**config_dict.get('image_log', {}))
-
-    # Handle optional attack configs
-    if 'indist_attack' in config_dict and config_dict['indist_attack'] is not None:
-        config_dict['indist_attack'] = AttackConfig(**config_dict['indist_attack'])
-    if 'indist_attack_xent' in config_dict and config_dict['indist_attack_xent'] is not None:
-        config_dict['indist_attack_xent'] = AttackConfig(**config_dict['indist_attack_xent'])
-
-    cfg = TrainConfig(**config_dict)
+    cfg = load_train_config(config_file, overrides)
 
     # Don't upload .pth files to wandb, since they are big
     # We just save them on disk for now.
@@ -699,10 +652,8 @@ if __name__ == "__main__":
         save_code=True,
         mode="disabled" if cfg.wandb_disabled else "online",
         name=run_name,
-        config=config_for_wandb,
+        config=dataclasses.asdict(cfg),
     )
-
-    print(config_for_wandb)
     LOGGER.info(f"Using device: {cfg.device}")
 
     # setting benchmark to True enables better performance on fixed input sizes.

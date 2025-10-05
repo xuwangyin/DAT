@@ -1,19 +1,24 @@
-"""Utilities for out-of-distribution detection evaluation."""
+"""Utilities and CLI for out-of-distribution detection evaluation."""
 
 from __future__ import annotations
 
+import sys
 import logging
 from typing import Tuple
 
 import InNOutRobustness.utils.datasets as dl
+from rebm.training import data as training_data
+from rebm.training.config_classes import (
+    TrainConfig,
+    load_train_config,
+)
 from rebm.training.eval_utils import ood_detection
 from rebm.training.modeling import get_model
-from rebm.training import data as training_data
 
 LOGGER = logging.getLogger(__name__)
 
 
-def run_ood_evaluation(cfg) -> Tuple[float, float]:
+def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
     """Run OOD detection evaluation and return clean/adv AUROC."""
     LOGGER.info("OOD detection evaluation requested. Initializing model...")
     model = get_model(
@@ -66,7 +71,7 @@ def run_ood_evaluation(cfg) -> Tuple[float, float]:
     return clean_auroc, adv_auroc
 
 
-def _get_outdist_loader(cfg, size: int):
+def _get_outdist_loader(cfg: TrainConfig, size: int):
     match cfg.outdist_dataset_ood_detection:
         case "noise":
             return dl.get_noise_dataset(
@@ -113,3 +118,31 @@ def _get_outdist_loader(cfg, size: int):
             raise ValueError(
                 f"Unknown outdist_dataset_ood_detection: {cfg.outdist_dataset_ood_detection}"
             )
+
+
+def main(argv: list[str] | None = None) -> Tuple[float, float]:
+    args = sys.argv[1:] if argv is None else argv
+
+    if not args or args[0] in {"-h", "--help"}:
+        print("OOD detection evaluation")
+        print("\nUsage: python -m rebm.training.ood CONFIG_FILE [KEY=VALUE ...]")
+        sys.exit(0)
+
+    config_file = args[0]
+    overrides = args[1:]
+
+    cfg = load_train_config(config_file, overrides)
+    clean_auroc, adv_auroc = run_ood_evaluation(cfg)
+    print(
+        f"Clean AUROC: {clean_auroc:.4f}, Adversarial AUROC: {adv_auroc:.4f}"
+    )
+    return clean_auroc, adv_auroc
+
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    main()

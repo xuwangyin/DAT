@@ -1,11 +1,13 @@
+import copy
 import json
 import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple
 
+from omegaconf import OmegaConf
 import torch
 
 
@@ -210,3 +212,35 @@ class TrainConfig:
     @property
     def device(self) -> torch.device:
         return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def load_train_config(
+    config_file: str, overrides: Iterable[str] | None = None
+) -> TrainConfig:
+    """Load TrainConfig from an OmegaConf file with optional overrides."""
+
+    omega_cfg = OmegaConf.load(config_file)
+    if overrides:
+        override_cfg = OmegaConf.from_dotlist(list(overrides))
+        omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
+
+    config_dict = copy.deepcopy(
+        OmegaConf.to_container(omega_cfg, resolve=True)
+    )
+
+    config_dict["data"] = DataConfig(**config_dict.get("data", {}))
+    config_dict["attack"] = AttackConfig(**config_dict.get("attack", {}))
+    config_dict["model"] = create_model_config(config_dict.get("model", {}))
+    config_dict["image_log"] = ImageLogConfig(**config_dict.get("image_log", {}))
+
+    if "indist_attack" in config_dict and config_dict["indist_attack"] is not None:
+        config_dict["indist_attack"] = AttackConfig(**config_dict["indist_attack"])
+    if (
+        "indist_attack_xent" in config_dict
+        and config_dict["indist_attack_xent"] is not None
+    ):
+        config_dict["indist_attack_xent"] = AttackConfig(
+            **config_dict["indist_attack_xent"]
+        )
+
+    return TrainConfig(**config_dict)
