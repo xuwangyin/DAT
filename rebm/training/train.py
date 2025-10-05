@@ -147,6 +147,130 @@ def log_image_grid(label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int) 
     wandb.log({label: wandb.Image(image_grid)}, step=step)
 
 
+def evaluate_and_log_fid(
+    model_to_eval: nn.Module,
+    cfg: TrainConfig,
+    image_generation_metrics: ImageGenerationMetrics,
+    global_step: int,
+) -> bool:
+    """Evaluate FID and save best model if improved.
+
+    Args:
+        model_to_eval: Model to evaluate (EMA or training model)
+        cfg: Training configuration
+        image_generation_metrics: Metrics tracker for image generation
+        global_step: Current global step (1-indexed)
+
+    Returns:
+        True if should exit training (eval_only mode), False otherwise
+    """
+    model_to_eval.eval()
+    n_imgs_seen = global_step * cfg.batch_size
+
+    fid, gen_imgs = evaluate_image_generation(model_to_eval, cfg)
+    LOGGER.info(
+        f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}"
+    )
+
+    if cfg.eval_only:
+        return True
+
+    is_new_best = image_generation_metrics.update(fid, gen_imgs)
+    if is_new_best:
+        model_to_save = model_to_eval.module.module if cfg.use_ema else model_to_eval.module
+        LOGGER.info(f'Saving {"EMA" if cfg.use_ema else "regular"} model with best FID')
+        rebm.training.modeling.save_best_fid_model(model_to_save)
+        LOGGER.info(f"New best FID: {fid}")
+
+    wandb.log(
+        dataclasses.asdict(image_generation_metrics),
+        step=n_imgs_seen,
+    )
+    return False
+
+
+def evaluate_and_log_accuracy(
+    model_to_eval: nn.Module,
+    cfg: TrainConfig,
+    test_loader_for_eval,
+    classification_metrics: ClassificationMetrics,
+    global_step: int,
+) -> None:
+    """Evaluate classification accuracy and save best model if improved.
+
+    Args:
+        model_to_eval: Model to evaluate (EMA or training model)
+        cfg: Training configuration
+        test_loader_for_eval: Test dataloader
+        classification_metrics: Metrics tracker for classification
+        global_step: Current global step (1-indexed)
+    """
+    model_to_eval.eval()
+    n_imgs_seen = global_step * cfg.batch_size
+
+    metrics_dict = {
+        "train_acc": None,
+        "test_acc": None,
+        "train_acc_calib": None,
+        "test_acc_calib": None,
+        "robust_train_acc": None,
+        "robust_test_acc": None,
+    }
+
+    LOGGER.info("Evaluating standard accuracy...")
+    metrics_dict["test_acc"] = eval_acc(
+        model=model_to_eval,
+        dataloader=test_loader_for_eval,
+        device=cfg.device,
+    )
+
+    # Free CUDA memory after accuracy evaluation
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    LOGGER.info(
+        f"Standard Acc - Train: {metrics_dict['train_acc']}, Test: {metrics_dict['test_acc']:.4f}"
+    )
+
+    if cfg.robust_eval:
+        LOGGER.info("Evaluating robust accuracy...")
+        attack_kwargs = None
+        if cfg.indist_attack_xent is not None:
+            attack_kwargs = {
+                "norm": "L2",
+                "eps": cfg.indist_attack_xent.eps,
+                "step_size": cfg.indist_attack_xent.step_size,
+                "steps": cfg.indist_attack_xent.max_steps,
+                "random_start": False,
+            }
+
+        metrics_dict["robust_test_acc"] = eval_robust_acc(
+            model=model_to_eval,
+            dataloader=test_loader_for_eval,
+            device=cfg.device,
+            percentage=100,
+            attack_kwargs=attack_kwargs,
+        )
+
+        # Free CUDA memory after robust accuracy evaluation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        LOGGER.info(
+            f"Robust Acc - Train: {metrics_dict['robust_train_acc']}, Test: {metrics_dict['robust_test_acc']:.4f}"
+        )
+
+    is_new_best_acc = classification_metrics.update(**metrics_dict)
+    if is_new_best_acc:
+        model_to_save = model_to_eval.module.module if cfg.use_ema else model_to_eval.module
+        rebm.training.modeling.save_best_accuracy_model(model_to_save)
+
+    wandb.log(
+        dataclasses.asdict(classification_metrics),
+        step=n_imgs_seen,
+    )
+
+
 def train(cfg: TrainConfig):
     np.random.seed(cfg.rand_seed)
     torch.manual_seed(cfg.rand_seed)
@@ -218,6 +342,7 @@ def train(cfg: TrainConfig):
         for local_step, train_indist_batch in enumerate(train_indist_iter):
             indist_epoch = global_step_one_indexed // len(train_indist_loader)
             global_step_one_indexed += 1
+            n_imgs_seen = global_step_one_indexed * cfg.batch_size
 
             if cfg.total_epochs is not None and indist_epoch >= cfg.total_epochs:
                 LOGGER.info(
@@ -242,7 +367,7 @@ def train(cfg: TrainConfig):
                     "indist_epoch": indist_epoch,
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 },
-                step=global_step_one_indexed * cfg.batch_size,
+                step=n_imgs_seen,
             )
             is_metric_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
@@ -276,121 +401,35 @@ def train(cfg: TrainConfig):
             )
 
             if is_checkpoint_save_step:
-                if cfg.use_ema:
-                    rebm.training.modeling.save_checkpoint(
-                        model=non_parallel_avg_model.module,
-                        optimizer=optimizer,
-                        step=global_step_one_indexed,
-                    )
-                else:
-                    rebm.training.modeling.save_checkpoint(
-                        model=model.module,
-                        optimizer=optimizer,
-                        step=global_step_one_indexed,
-                    )
+                model_to_save = non_parallel_avg_model.module if cfg.use_ema else model.module
+                rebm.training.modeling.save_checkpoint(
+                    model=model_to_save,
+                    optimizer=optimizer,
+                    step=global_step_one_indexed,
+                )
 
             if is_fid_logging_step and not cfg.indist_train_only:
                 model.zero_grad()
-
-                eval_model = (
-                    nn.DataParallel(non_parallel_avg_model)
-                    if cfg.use_ema
-                    else model
+                model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
+                should_exit = evaluate_and_log_fid(
+                    model_to_eval,
+                    cfg,
+                    image_generation_metrics,
+                    global_step_one_indexed,
                 )
-                eval_model.eval()
-                fid, gen_imgs = evaluate_image_generation(eval_model, cfg)
-                LOGGER.info(
-                    f"FID: {fid}, step: {global_step_one_indexed}, n_imgs: {global_step_one_indexed * cfg.batch_size}"
-                )
-                if cfg.eval_only:
+                if should_exit:
                     return
-                is_new_best_fid = image_generation_metrics.update(fid, gen_imgs)
-                if is_new_best_fid:
-                    if cfg.use_ema:
-                        LOGGER.info('Saving EMA model with best FID')
-                        rebm.training.modeling.save_best_fid_model(eval_model.module.module)
-                    else:
-                        LOGGER.info('Saving regular model with best FID')
-                        rebm.training.modeling.save_best_fid_model(eval_model.module)
-                    LOGGER.info(f"New best FID: {fid}")
-                wandb.log(
-                    dataclasses.asdict(image_generation_metrics),
-                    step=global_step_one_indexed * cfg.batch_size,
-                )
 
             if is_acc_logging_step:
                 model.eval()
                 model.zero_grad()
-
-                eval_model = (
-                    nn.DataParallel(non_parallel_avg_model)
-                    if cfg.use_ema
-                    else model
-                )
-                eval_model.eval()
-
-                metrics_dict = {
-                    "train_acc": None,
-                    "test_acc": None,
-                    "train_acc_calib": None,
-                    "test_acc_calib": None,
-                    "robust_train_acc": None,
-                    "robust_test_acc": None,
-                }
-
-                LOGGER.info("Evaluating standard accuracy...")
-                metrics_dict["test_acc"] = eval_acc(
-                    model=eval_model,
-                    dataloader=test_loader_for_eval,
-                    device=cfg.device,
-                )
-                
-                # Free CUDA memory after accuracy evaluation
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                
-                LOGGER.info(
-                    f"Standard Acc - Train: {metrics_dict['train_acc']}, Test: {metrics_dict['test_acc']:.4f}"
-                )
-
-                if cfg.robust_eval:
-                    LOGGER.info("Evaluating robust accuracy...")
-                    attack_kwargs = None
-                    if cfg.indist_attack_xent is not None:
-                        attack_kwargs = {
-                            "norm": "L2",
-                            "eps": cfg.indist_attack_xent.eps,
-                            "step_size": cfg.indist_attack_xent.step_size,
-                            "steps": cfg.indist_attack_xent.max_steps,
-                            "random_start": False,
-                        }
-
-                    metrics_dict["robust_test_acc"] = eval_robust_acc(
-                        model=eval_model,
-                        dataloader=test_loader_for_eval,
-                        device=cfg.device,
-                        percentage=100,
-                        attack_kwargs=attack_kwargs,
-                    )
-                    
-                    # Free CUDA memory after robust accuracy evaluation
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-
-                    LOGGER.info(
-                        f"Robust Acc - Train: {metrics_dict['robust_train_acc']}, Test: {metrics_dict['robust_test_acc']:.4f}"
-                    )
-
-                is_new_best_acc = classification_metrics.update(**metrics_dict)
-                if is_new_best_acc:
-                    if cfg.use_ema:
-                        rebm.training.modeling.save_best_accuracy_model(eval_model.module.module)
-                    else:
-                        rebm.training.modeling.save_best_accuracy_model(eval_model.module)
-
-                wandb.log(
-                    dataclasses.asdict(classification_metrics),
-                    step=global_step_one_indexed * cfg.batch_size,
+                model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
+                evaluate_and_log_accuracy(
+                    model_to_eval,
+                    cfg,
+                    test_loader_for_eval,
+                    classification_metrics,
+                    global_step_one_indexed,
                 )
 
             train_outdist_imgs = (
@@ -434,7 +473,7 @@ def train(cfg: TrainConfig):
                         "train_indist_imgs_xent",
                         train_indist_imgs_xent,
                         cfg,
-                        global_step_one_indexed * cfg.batch_size
+                        n_imgs_seen
                     )
                 continue
 
@@ -499,11 +538,10 @@ def train(cfg: TrainConfig):
             if is_metric_logging_step:
                 wandb.log(
                     dict_append_label(train_metrics.to_simple_dict(), "train_"),
-                    step=global_step_one_indexed * cfg.batch_size,
+                    step=n_imgs_seen,
                 )
 
             if is_image_logging_step:
-                step = global_step_one_indexed * cfg.batch_size
                 for label, imgs in [
                     ("train_indist_imgs_xent", train_indist_imgs_xent),
                     ("train_indist_imgs", train_metrics.indist_imgs),
@@ -512,7 +550,7 @@ def train(cfg: TrainConfig):
                     ("train_adv_imgs", train_metrics.adv_imgs),
                     ("train_gen_imgs", image_generation_metrics.gen_imgs),
                 ]:
-                    log_image_grid(label, imgs, cfg, step)
+                    log_image_grid(label, imgs, cfg, n_imgs_seen)
 
             if (
                 cur_outdist_steps < cfg.attack.max_steps
