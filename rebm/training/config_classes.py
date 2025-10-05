@@ -1,3 +1,5 @@
+import os
+import uuid
 from dataclasses import dataclass
 from typing import List, Literal, Optional
 
@@ -42,6 +44,11 @@ class ImageLogConfig:
     lr: Optional[float] = None  # only for Adam
     step_size: Optional[float] = None  # only for PGD
     eps: Optional[float | int] = None  # only for PGD
+
+    def __post_init__(self):
+        if self.save_dir is None:
+            unique_suffix = uuid.uuid4().hex[:8]
+            self.save_dir = os.path.join("image_log", unique_suffix)
 
 
 @dataclass

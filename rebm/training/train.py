@@ -202,7 +202,7 @@ class TrainConfig:
 
         if self.wandb_dir is None:
             self.wandb_dir = "./"
-        # Note: image_log.save_dir will be set later after wandb.init() using wandb run ID
+        # image_log.save_dir now defaults via ImageLogConfig.__post_init__
         if (
             self.optimizer == "sgd"
             and self.total_epochs is None
@@ -972,9 +972,6 @@ if __name__ == "__main__":
         config=config_for_wandb,
     )
 
-    # Set image_log.save_dir using wandb run ID if not specified
-    if cfg.image_log.save_dir is None:
-        cfg.image_log.save_dir = f"{cfg.wandb_dir}/eval_fid/{wandb.run.id}"
     print(config_for_wandb)
     LOGGER.info(f"Using device: {cfg.device}")
 
