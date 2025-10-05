@@ -129,7 +129,7 @@ def log_generate_images(
     return gen_imgs
 
 
-def log_generation(model: nn.Module, cfg) -> tuple[float | None, torch.Tensor | None]:
+def evaluate_image_generation(model: nn.Module, cfg) -> tuple[float | None, torch.Tensor | None]:
     """Compute FID (if enabled) and sample images for logging."""
     assert_no_grad(model)
     fid, gen_imgs = None, None

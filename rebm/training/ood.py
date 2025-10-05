@@ -26,7 +26,6 @@ def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
         device=cfg.device,
         num_classes=cfg.data.num_classes,
         indist_dataset=cfg.data.indist_dataset,
-        resume_path=cfg.resume_path,
     ).to(cfg.device)
     model.eval()
 

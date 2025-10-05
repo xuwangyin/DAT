@@ -70,7 +70,7 @@ min_imgs_per_threshold: 1000
 
 # Logging parameters
 n_imgs_per_metrics_log: 50000
-n_imgs_per_image_log: 50000
+n_imgs_per_image_log: 5000000
 n_imgs_per_classification_log: 50000
 n_imgs_per_ckpt_save: 1000000
 wandb_project: "DAT"

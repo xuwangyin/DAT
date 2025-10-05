@@ -54,11 +54,11 @@ from rebm.training.eval_utils import (
     compute_img_diff,
     eval_acc,
     eval_robust_acc,
+    evaluate_image_generation,
     generate_images,
     generate_indist_adv_images,
     generate_outdist_adv_images,
     get_auc,
-    log_generation,
 )
 from rebm.utils import assert_no_grad, load_state_dict, remap_checkpoint_keys
 from rebm.training.utils_architecture import replace_convstem
@@ -82,15 +82,18 @@ def dict_append_label(d: dict, label: str) -> dict:
     return {label + k: v for k, v in d.items()}
 
 
+def create_dataloaders(cfg: TrainConfig) -> dict:
+    """Create all dataloaders needed for training.
 
-def train(cfg: TrainConfig):
-    np.random.seed(cfg.rand_seed)
-    torch.manual_seed(cfg.rand_seed)
-    global_step_one_indexed: int = 0
-
-    image_generation_metrics = ImageGenerationMetrics()
-    classification_metrics = ClassificationMetrics()
-
+    Returns:
+        dict with keys:
+            - train_indist_loader: Loader for in-distribution training (generation augmentation)
+            - train_indist_loader_xent: Loader for in-distribution training (classification augmentation)
+            - train_indist_iter: Infinite iterator for train_indist_loader
+            - train_indist_iter_xent: Infinite iterator for train_indist_loader_xent
+            - train_outdist_iter: Infinite iterator for out-distribution data
+            - test_loader_for_eval: Loader for test set evaluation
+    """
     train_indist_loader = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
@@ -103,8 +106,6 @@ def train(cfg: TrainConfig):
         shuffle=True,
         augm_type=cfg.augm_type_classification
     )
-    train_indist_iter = infinite_iter(train_indist_loader)
-    train_indist_iter_xent = infinite_iter(train_indist_loader_xent)
     train_outdist_iter = infinite_iter(rebm.training.data.get_outdist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
@@ -114,13 +115,60 @@ def train(cfg: TrainConfig):
         openimages_max_samples=cfg.openimages_max_samples,
         openimages_augm=cfg.openimages_augm,
     ))
+    test_loader_for_eval = rebm.training.data.get_indist_dataloader(
+        config=cfg.data,
+        batch_size=cfg.batch_size,
+        split="val",
+        shuffle=False,
+        augm_type="none" if 'cifar' in cfg.data.indist_dataset else "test"
+    )
+
+    return {
+        'train_indist_loader': train_indist_loader,
+        'train_indist_loader_xent': train_indist_loader_xent,
+        'train_indist_iter': infinite_iter(train_indist_loader),
+        'train_indist_iter_xent': infinite_iter(train_indist_loader_xent),
+        'train_outdist_iter': train_outdist_iter,
+        'test_loader_for_eval': test_loader_for_eval,
+    }
+
+
+def log_image_grid(label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int) -> None:
+    """Log image grid to wandb.
+
+    Args:
+        label: Label for the wandb log
+        imgs: Image tensor to log (will use first 10 images)
+        cfg: Training configuration
+        step: Global step for logging
+    """
+    padding = 0 if "cifar10" in cfg.data.indist_dataset else 2
+    image_grid = torchvision.utils.make_grid(imgs[:10], nrow=10, padding=padding)
+    wandb.log({label: wandb.Image(image_grid)}, step=step)
+
+
+def train(cfg: TrainConfig):
+    np.random.seed(cfg.rand_seed)
+    torch.manual_seed(cfg.rand_seed)
+    global_step_one_indexed: int = 0
+
+    image_generation_metrics = ImageGenerationMetrics()
+    classification_metrics = ClassificationMetrics()
+
+    # Create all dataloaders
+    dataloaders = create_dataloaders(cfg)
+    train_indist_loader = dataloaders['train_indist_loader']
+    train_indist_loader_xent = dataloaders['train_indist_loader_xent']
+    train_indist_iter = dataloaders['train_indist_iter']
+    train_indist_iter_xent = dataloaders['train_indist_iter_xent']
+    train_outdist_iter = dataloaders['train_outdist_iter']
+    test_loader_for_eval = dataloaders['test_loader_for_eval']
 
     model = rebm.training.modeling.get_model(
         model_config=cfg.model,
         device=cfg.device,
         num_classes=cfg.data.num_classes,
         indist_dataset=cfg.data.indist_dataset,
-        resume_path=cfg.resume_path,
     )
     if cfg.use_ema:
         non_parallel_avg_model = AveragedModel(
@@ -138,7 +186,6 @@ def train(cfg: TrainConfig):
         optimizer_name=cfg.optimizer,
         lr=cfg.lr,
         wd=cfg.wd,
-        resume_path=cfg.resume_path,
     )
 
     get_metrics_shared_kwargs = dict(
@@ -152,30 +199,6 @@ def train(cfg: TrainConfig):
         cfg=cfg,
         criterion=criterion_xent,
     )
-
-    train_loader_for_eval = rebm.training.data.get_indist_dataloader(
-        config=cfg.data,
-        batch_size=cfg.batch_size,
-        split="train",
-        shuffle=False,
-        augm_type="none"
-    )
-    if 'cifar' in cfg.data.indist_dataset:
-        test_loader_for_eval = rebm.training.data.get_indist_dataloader(
-            config=cfg.data,
-            batch_size=cfg.batch_size,
-            split="val",
-            shuffle=False,
-            augm_type="none"
-        )
-    else:
-        test_loader_for_eval = rebm.training.data.get_indist_dataloader(
-            config=cfg.data,
-            batch_size=cfg.batch_size,
-            split="val",
-            shuffle=False,
-            augm_type="test"
-        )
 
     LOGGER.info(
         f"indist dataset classes: {train_indist_loader.dataset.classes}"
@@ -193,15 +216,10 @@ def train(cfg: TrainConfig):
             maxlen=math.ceil(cfg.min_imgs_per_threshold / cfg.batch_size)
         )
         for local_step, train_indist_batch in enumerate(train_indist_iter):
+            indist_epoch = global_step_one_indexed // len(train_indist_loader)
             global_step_one_indexed += 1
-            indist_epoch = (global_step_one_indexed - 1) // len(
-                train_indist_loader
-            )
 
-            if (
-                cfg.total_epochs is not None
-                and indist_epoch >= cfg.total_epochs
-            ):
+            if cfg.total_epochs is not None and indist_epoch >= cfg.total_epochs:
                 LOGGER.info(
                     f"Reached maximum number of epochs ({cfg.total_epochs}). Stopping training."
                 )
@@ -218,13 +236,11 @@ def train(cfg: TrainConfig):
                 for param_group in optimizer.param_groups:
                     param_group["lr"] = current_lr
 
-            current_lr = optimizer.param_groups[0]["lr"]
-
             wandb.log(
                 {
                     "cur_outdist_steps": cur_outdist_steps,
                     "indist_epoch": indist_epoch,
-                    "learning_rate": current_lr,
+                    "learning_rate": optimizer.param_groups[0]["lr"],
                 },
                 step=global_step_one_indexed * cfg.batch_size,
             )
@@ -236,14 +252,14 @@ def train(cfg: TrainConfig):
             is_image_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
                 batch_size=cfg.batch_size,
-                interval_in_imgs=cfg.n_imgs_per_image_log * 100,
+                interval_in_imgs=cfg.n_imgs_per_image_log,
             )
             is_fid_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
                 batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_image_log,
             )
-            is_classification_logging_step = (
+            is_acc_logging_step = (
                 cfg.data.num_classes > 1
                 and cfg.n_imgs_per_classification_log is not None
                 and should_trigger_event(
@@ -252,13 +268,14 @@ def train(cfg: TrainConfig):
                     interval_in_imgs=cfg.n_imgs_per_classification_log,
                 )
             )
-
-            if should_trigger_event(
+            is_checkpoint_save_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
                 batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_ckpt_save,
                 at_end=True,
-            ):
+            )
+
+            if is_checkpoint_save_step:
                 if cfg.use_ema:
                     rebm.training.modeling.save_checkpoint(
                         model=non_parallel_avg_model.module,
@@ -281,7 +298,7 @@ def train(cfg: TrainConfig):
                     else model
                 )
                 eval_model.eval()
-                fid, gen_imgs = log_generation(eval_model, cfg)
+                fid, gen_imgs = evaluate_image_generation(eval_model, cfg)
                 LOGGER.info(
                     f"FID: {fid}, step: {global_step_one_indexed}, n_imgs: {global_step_one_indexed * cfg.batch_size}"
                 )
@@ -290,10 +307,10 @@ def train(cfg: TrainConfig):
                 is_new_best_fid = image_generation_metrics.update(fid, gen_imgs)
                 if is_new_best_fid:
                     if cfg.use_ema:
-                        print('saving EMA model')
+                        LOGGER.info('Saving EMA model with best FID')
                         rebm.training.modeling.save_best_fid_model(eval_model.module.module)
                     else:
-                        print('saving regular model')
+                        LOGGER.info('Saving regular model with best FID')
                         rebm.training.modeling.save_best_fid_model(eval_model.module)
                     LOGGER.info(f"New best FID: {fid}")
                 wandb.log(
@@ -301,7 +318,7 @@ def train(cfg: TrainConfig):
                     step=global_step_one_indexed * cfg.batch_size,
                 )
 
-            if is_classification_logging_step:
+            if is_acc_logging_step:
                 model.eval()
                 model.zero_grad()
 
@@ -386,7 +403,6 @@ def train(cfg: TrainConfig):
 
             optimizer.zero_grad()
             if cfg.indist_train_only:
-                # Use batch normalization if training only on in-distribution data
                 model.train()
                 train_indist_imgs_xent, train_indist_labels_xent = next(
                     train_indist_iter_xent
@@ -414,23 +430,14 @@ def train(cfg: TrainConfig):
                         f"xent_loss: {xent_loss.item():.5f}"
                     )
                 if is_image_logging_step:
-                    for label, imgs in [
-                        ("train_indist_imgs_xent", train_indist_imgs_xent),
-                    ]:
-                        # Use white padding for CIFAR10
-                        padding = (
-                            0 if "cifar10" in cfg.data.indist_dataset else 2
-                        )
-                        image_grid = torchvision.utils.make_grid(
-                            imgs[:10], nrow=10, padding=padding
-                        )
-                        wandb.log(
-                            {label: wandb.Image(image_grid)},
-                            step=global_step_one_indexed * cfg.batch_size,
-                        )
+                    log_image_grid(
+                        "train_indist_imgs_xent",
+                        train_indist_imgs_xent,
+                        cfg,
+                        global_step_one_indexed * cfg.batch_size
+                    )
                 continue
 
-            # Hybrid training
             train_metrics = compute_training_metrics(
                 indist_imgs=train_indist_imgs,
                 indist_labels=train_indist_labels,
@@ -438,7 +445,6 @@ def train(cfg: TrainConfig):
                 outdist_step=cur_outdist_steps,
                 **get_metrics_shared_kwargs,
             )
-            # TODO: train_indist_imgs.requires_grad is true at this point
             if cfg.indist_attack_xent is not None:
                 train_indist_imgs_xent, train_indist_labels_xent = next(
                     train_indist_iter_xent
@@ -448,7 +454,6 @@ def train(cfg: TrainConfig):
                     cfg.device
                 )
 
-                # If indist_clean_extra flag is set, get additional clean samples
                 indist_samples_extra = None
                 indist_labels_extra = None
                 if cfg.indist_clean_extra:
@@ -498,6 +503,7 @@ def train(cfg: TrainConfig):
                 )
 
             if is_image_logging_step:
+                step = global_step_one_indexed * cfg.batch_size
                 for label, imgs in [
                     ("train_indist_imgs_xent", train_indist_imgs_xent),
                     ("train_indist_imgs", train_metrics.indist_imgs),
@@ -506,15 +512,7 @@ def train(cfg: TrainConfig):
                     ("train_adv_imgs", train_metrics.adv_imgs),
                     ("train_gen_imgs", image_generation_metrics.gen_imgs),
                 ]:
-                    # Use white padding for CIFAR10
-                    padding = 0 if "cifar10" in cfg.data.indist_dataset else 2
-                    image_grid = torchvision.utils.make_grid(
-                        imgs[:10], nrow=10, padding=padding
-                    )
-                    wandb.log(
-                        {label: wandb.Image(image_grid)},
-                        step=global_step_one_indexed * cfg.batch_size,
-                    )
+                    log_image_grid(label, imgs, cfg, step)
 
             if (
                 cur_outdist_steps < cfg.attack.max_steps
@@ -525,9 +523,8 @@ def train(cfg: TrainConfig):
                 LOGGER.info(
                     f"Outdist step {cur_outdist_steps} reached max samples {cfg.samples_per_attack_step}"
                 )
-                break  # breaks the iteration loop
+                break
 
-            # Break if we have reached the auc threshold
             if (
                 cur_outdist_steps < cfg.attack.max_steps
                 and np.mean(train_adv_auc_deque) >= cfg.AUC_th

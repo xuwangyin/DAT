@@ -175,8 +175,12 @@ def get_indist_dataset(
     augm_type: str = "autoaugment_cutout",
 ):
     """Get in-distribution dataset."""
+    assert split in ['train', 'val'], f"split must be 'train' or 'val', got {split}"
+
     match config.indist_dataset:
         case "cifar10-conditional":
+            if split == 'val':
+                assert augm_type == 'none', f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
             indist_dataset = get_cifar10_dataset(
                 data_dir=config.indist_ds_dir,
                 split=split,
@@ -184,6 +188,8 @@ def get_indist_dataset(
                 augm_type=augm_type,
             )
         case "cifar100-conditional":
+            if split == 'val':
+                assert augm_type == 'none', f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
             indist_dataset = get_cifar100_dataset(
                 data_dir=config.indist_ds_dir,
                 split=split,
@@ -194,8 +200,7 @@ def get_indist_dataset(
             LOGGER.info("Using ImageNet dataset")
 
             # Validate augmentation type for ImageNet
-            is_train = split == "train"
-            if is_train:
+            if split == "train":
                 assert augm_type in ["madry", "generation_id", "generation_id_randomcrop", "none", "default"]
             else:
                 assert augm_type in ["none", "test"]

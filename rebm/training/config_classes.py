@@ -119,7 +119,6 @@ class TrainConfig:
     image_log: ImageLogConfig
 
     # Optimization parameters
-    resume_path: Optional[str]
     optimizer: str
     wd: float
     lr: float
@@ -189,13 +188,6 @@ class TrainConfig:
         return torch.float16 if self.fp16 else torch.float32
 
     def __post_init__(self):
-        if self.resume_path is not None:
-            self.seed = int(datetime.now().timestamp())
-            summary_path = Path(self.resume_path) / "wandb-summary.json"
-            with open(summary_path, "r") as f:
-                summary_data = json.load(f)
-                self.attack.start_step = summary_data.get("cur_outdist_steps", 0)
-
         if self.wandb_dir is None:
             self.wandb_dir = "./"
         if (

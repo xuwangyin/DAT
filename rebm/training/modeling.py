@@ -70,7 +70,6 @@ def get_model(
     device: str,
     num_classes: int,
     indist_dataset: str,
-    resume_path: str | None = None,
 ) -> nn.Module:
     """Create and initialize a model based on configuration.
 
@@ -79,18 +78,11 @@ def get_model(
         device: Device to place model on
         num_classes: Number of output classes
         indist_dataset: Name of in-distribution dataset for normalization
-        resume_path: Path to resume training checkpoint
 
     Returns:
         Initialized model (wrapped in DataParallel)
     """
     model_type = model_config.model_type
-
-    def load_resume_checkpoint(model):
-        ckpt_path = os.path.join(resume_path, "model.pth")
-        model = load_checkpoint(model, ckpt_path, weights_only=True)
-        LOGGER.info(f"Resuming model from {resume_path}")
-        return model
 
     # ImageNet ResNet/WideResNet models
     if "resnet" in model_type.lower() and model_type.lower().endswith("imagenet"):
@@ -109,10 +101,6 @@ def get_model(
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
             model = load_checkpoint(model, model_config.ckpt_path)
-
-        # Resume from checkpoint if specified
-        if resume_path is not None:
-            model = load_resume_checkpoint(model)
 
         return model
 
@@ -135,10 +123,6 @@ def get_model(
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
             model = load_checkpoint(model, model_config.ckpt_path)
-
-        # Resume from checkpoint if specified
-        if resume_path is not None:
-            model = load_resume_checkpoint(model)
 
         return model
 
@@ -171,10 +155,6 @@ def get_model(
         if model_config.ckpt_path is not None:
             model = load_checkpoint(model, model_config.ckpt_path)
 
-        # Resume from checkpoint if specified
-        if resume_path is not None:
-            model = load_resume_checkpoint(model)
-
         return model
 
     else:
@@ -186,7 +166,6 @@ def get_optimizer(
     optimizer_name: str,
     lr: float,
     wd: float,
-    resume_path: str | None = None,
 ) -> torch.optim.Optimizer:
     """Create optimizer for model parameters.
 
@@ -195,7 +174,6 @@ def get_optimizer(
         optimizer_name: Optimizer type ("sgd", "adam", "adamw")
         lr: Learning rate
         wd: Weight decay
-        resume_path: Path to resume optimizer state
 
     Returns:
         Initialized optimizer
@@ -229,12 +207,6 @@ def get_optimizer(
 
         case _:
             raise ValueError(f"Unknown optimizer: {optimizer_name}")
-
-    if resume_path is not None:
-        optimizer.load_state_dict(
-            torch.load(os.path.join(resume_path, "optimizer.pth"))
-        )
-        LOGGER.info(f"Resuming optimizer from {resume_path}")
 
     return optimizer
 

@@ -25,7 +25,6 @@ def run_counterfactual_generation(cfg: TrainConfig) -> None:
         device=cfg.device,
         num_classes=cfg.data.num_classes,
         indist_dataset=cfg.data.indist_dataset,
-        resume_path=cfg.resume_path,
     ).to(cfg.device)
     model.eval()
 
