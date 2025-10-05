@@ -1,7 +1,12 @@
+import json
 import os
 import uuid
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import List, Literal, Optional, Tuple
+
+import torch
 
 
 @dataclass
@@ -99,3 +104,109 @@ def create_model_config(config_dict: dict) -> BaseModelConfig:
     else:
         # Return BaseModelConfig for all other cases (ResNet, WideResNet, etc.)
         return BaseModelConfig(**config_dict)
+
+
+@dataclass
+class TrainConfig:
+    """Top-level training configuration."""
+
+    # Required parameters
+    data: DataConfig
+    attack: AttackConfig
+    model: BaseModelConfig
+    image_log: ImageLogConfig
+
+    # Optimization parameters
+    resume_path: Optional[str]
+    optimizer: str
+    wd: float
+    lr: float
+    r1reg: float
+    xent_indist_weight: float
+    xent_outdist_weight: float
+    xent_adv_weight: float
+    r1_indist_weight: float
+    r1_outdist_weight: float
+    r1_adv_weight: float
+
+    # Training scheduling
+    batch_size: int
+    min_imgs_per_threshold: int
+    AUC_th: float
+    rand_seed: int
+
+    # Logging
+    n_imgs_per_metrics_log: int
+    n_imgs_per_image_log: int
+    n_imgs_per_ckpt_save: int
+
+    # WandB
+    wandb_project: str
+    wandb_dir: str
+    wandb_disabled: bool
+    tags: Tuple[str, ...]
+
+    # Optional parameters
+    indist_attack: AttackConfig | None = None
+    indist_attack_only: bool = False
+    indist_attack_xent: AttackConfig | None = None
+    indist_clean_extra: bool = False
+    fp16: bool = False
+    samples_per_attack_step: int | None = None
+    n_imgs_per_classification_log: int | None = None
+    use_ema: bool = False
+
+    # Evaluation parameters
+    robust_eval: bool = True
+    indist_perturb: bool = False
+    indist_perturb_steps: int = 10
+    indist_perturb_eps: float = 0.5
+    augm_type_classification: str = "autoaugment_cutout"
+    augm_type_generation: str = "original"
+    mixup_alpha: int = 5
+    mixup_beta: int = 1
+    tinyimages_loader: str = "innout"
+    indist_train_only: bool = False
+    fixed_lr: bool = False
+    logsumexp: bool = True
+    logsumexp_sampling: bool = False
+    bce_weight: float = 1.0
+    xent_lr_multiplier: float = 1.0
+    eval_only: bool = False
+    use_counterfactuals: bool = False
+    evaluate_ood_detection: bool = False
+    ood_detection_logsumexp: bool = False
+    outdist_dataset_ood_detection: str = "noise"
+    openimages_max_samples: int | None = None
+    openimages_augm: str | None = None
+
+    total_epochs: int | None = None
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return torch.float16 if self.fp16 else torch.float32
+
+    def __post_init__(self):
+        if self.resume_path is not None:
+            self.seed = int(datetime.now().timestamp())
+            summary_path = Path(self.resume_path) / "wandb-summary.json"
+            with open(summary_path, "r") as f:
+                summary_data = json.load(f)
+                self.attack.start_step = summary_data.get("cur_outdist_steps", 0)
+
+        if self.wandb_dir is None:
+            self.wandb_dir = "./"
+        if (
+            self.optimizer == "sgd"
+            and self.total_epochs is None
+            and not self.fixed_lr
+        ):
+            raise ValueError("total_epochs must be set for SGD optimizer")
+        if self.indist_train_only and self.indist_clean_extra:
+            raise ValueError(
+                "indist_clean_extra cannot be True when indist_train_only is True"
+            )
+
+    @property
+    def device(self) -> torch.device:
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

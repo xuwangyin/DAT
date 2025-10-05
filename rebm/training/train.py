@@ -66,6 +66,7 @@ from rebm.training.config_classes import (
     BaseModelConfig,
     DataConfig,
     ImageLogConfig,
+    TrainConfig,
     create_model_config,
 )
 from rebm.training.eval_utils import (
@@ -102,130 +103,6 @@ def dict_append_label(d: dict, label: str) -> dict:
     return {label + k: v for k, v in d.items()}
 
 
-@dataclasses.dataclass
-class TrainConfig:
-    """Default parameters are for training on lsun-bird. See defaults in baselines/*.yaml"""
-
-    # Required parameters
-    data: DataConfig
-    attack: AttackConfig
-    model: BaseModelConfig
-    image_log: ImageLogConfig
-
-    # Optimization parameters
-    resume_path: Optional[str]  # Path to resume training from checkpoint
-    optimizer: str
-    wd: float
-    lr: float
-    r1reg: float
-    xent_indist_weight: float
-    xent_outdist_weight: float
-    xent_adv_weight: float  # These 3 will be normalized to sum to 1
-    r1_indist_weight: float
-    r1_outdist_weight: float
-    r1_adv_weight: float  # These 3 will be normalized to sum to 1
-
-    # Training scheduling
-    batch_size: int  # openai/clip-vit-base-patch32: 160, stargan: 62
-    min_imgs_per_threshold: int  # Minimum steps before checking AUC
-    AUC_th: float  # When AUC reaches threshold, move to next epoch
-    rand_seed: int
-
-    # Logging
-    n_imgs_per_metrics_log: int
-    n_imgs_per_image_log: int
-    n_imgs_per_ckpt_save: int
-
-    # WandB
-    wandb_project: str
-    wandb_dir: str  # Default: ./
-    wandb_disabled: bool
-    tags: Tuple[str, ...]
-
-    # Optional parameters
-    indist_attack: AttackConfig | None = None
-    indist_attack_only: bool = False
-    indist_attack_xent: AttackConfig | None = None
-    indist_clean_extra: bool = (
-        False  # When true, sample additional clean data and compute xent
-    )
-    fp16: bool = False
-    samples_per_attack_step: int | None = None
-    n_imgs_per_classification_log: int | None = None
-    use_ema: bool = (
-        False  # Whether to use Exponential Moving Average for model weights
-    )
-
-    # Evaluation parameters
-    robust_eval: bool = True  # Whether to perform robust evaluation
-    indist_perturb: bool = False
-    indist_perturb_steps: int = 10
-    indist_perturb_eps: float = 0.5
-    augm_type_classification: str = "autoaugment_cutout"
-    augm_type_generation: str = "original"
-    mixup_alpha: int = 5
-    mixup_beta: int = 1
-    tinyimages_loader: str = "innout"
-    indist_train_only: bool = False
-    fixed_lr: bool = False
-    logsumexp: bool = True
-    logsumexp_sampling: bool = False
-    bce_weight: float = 1.0
-    xent_lr_multiplier: float = 1.0
-    eval_only: bool = False  # When enabled, quit after FID score is computed
-    use_counterfactuals: bool = False
-    evaluate_ood_detection: bool = False  # When enabled, perform OOD detection evaluation
-    ood_detection_logsumexp: bool = False  # When enabled, perform OOD detection evaluation with logsumexp
-    outdist_dataset_ood_detection: str = "noise"  # Dataset to use for OOD detection evaluation, options: "noise", "svhn", "cifar100", "cifar10", "imagenet"
-    openimages_max_samples: int | None = None  # Maximum number of samples to use from OpenImages dataset (default: use all ~330K samples)
-    openimages_augm: str | None = None  # Augmentation type for OpenImages dataset
-
-    total_epochs: int | None = None  # Total number of epochs for lr scheduling
-
-    @property
-    def dtype(self) -> torch.dtype:
-        return torch.float16 if self.fp16 else torch.float32
-
-    def __post_init__(self):
-        if self.resume_path is not None:
-            # Set a random seed for resumption
-            self.seed = int(datetime.now().timestamp())
-
-            summary_path = Path(self.resume_path) / "wandb-summary.json"
-            with open(summary_path, "r") as f:
-                summary_data = json.load(f)
-                self.attack.start_step = summary_data.get(
-                    "cur_outdist_steps", 0
-                )
-
-        if self.wandb_dir is None:
-            self.wandb_dir = "./"
-        # image_log.save_dir now defaults via ImageLogConfig.__post_init__
-        if (
-            self.optimizer == "sgd"
-            and self.total_epochs is None
-            and not self.fixed_lr
-        ):
-            raise ValueError("total_epochs must be set for SGD optimizer")
-        # if (
-        #     self.indist_attack_xent is not None
-        #     and self.indist_attack is not None
-        # ):
-        #     raise ValueError(
-        #         "indist_attack and indist_attack_xent cannot both be set"
-        #     )
-        if self.indist_train_only and self.indist_clean_extra:
-            raise ValueError(
-                "indist_clean_extra cannot be True when indist_train_only is True"
-            )
-        # if self.indist_attack_xent is not None and self.indist_perturb:
-        #     raise ValueError(
-        #         "indist_attack_xent and indist_perturb cannot both be set"
-        #     )
-
-    @property
-    def device(self) -> torch.device:
-        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def train(cfg: TrainConfig):
     np.random.seed(cfg.rand_seed)
