@@ -586,40 +586,6 @@ def train(cfg: TrainConfig):
                     step=global_step_one_indexed * cfg.batch_size,
                 )
 
-                # model.zero_grad()
-                # model.eval()
-                # test_indist_batch = next(test_indist_iter)
-                # test_outdist_imgs = cfg.get_outdist_images(
-                #     next(test_outdist_iter)
-                # )
-
-                # test_metrics = compute_testing_metrics(
-                #     indist_imgs=test_indist_batch[0].to(cfg.device),
-                #     indist_labels=test_indist_batch[1],
-                #     outdist_imgs=test_outdist_imgs,
-                #     outdist_step=cur_outdist_steps,
-                #     **get_metrics_shared_kwargs,
-                # )
-                # test_fixed_metrics = compute_testing_metrics(
-                #     indist_imgs=test_indist_batch[0].to(cfg.device),
-                #     indist_labels=test_indist_batch[1],
-                #     outdist_imgs=test_outdist_imgs,
-                #     outdist_step=cfg.attack.fixed_steps,
-                #     **get_metrics_shared_kwargs,
-                # )
-
-                # wandb.log(
-                #     dict_append_label(train_metrics.to_simple_dict(), "train_")
-                #     | dict_append_label(test_metrics.to_simple_dict(), "test_")
-                #     | dict_append_label(
-                #         test_fixed_metrics.to_simple_dict(), "test_fixed_"
-                #     )
-                #     | dict(
-                #         local_imgs=(local_step + 1) * cfg.batch_size,
-                #     ),
-                #     step=global_step_one_indexed * cfg.batch_size,
-                # )
-
             # Log images infrequently
             if is_image_logging_step:
                 for label, imgs in [
