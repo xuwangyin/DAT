@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Iterable
 
 import einops
-# import kornia.augmentation as K
 import numpy as np
 import torch
 import torch.utils.data
@@ -28,9 +27,6 @@ from torch import nn
 from torchvision import datasets
 
 from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import get_imageNet_augmentation
-
-# import rebm.models.bat
-# import rebm.models.convnextv2 as convnextv2
 import rebm.models.preactresnet
 import rebm.models.robustness_resnet_cifar10
 import rebm.models.wide_resnet_innoutrobustness
@@ -95,7 +91,6 @@ def train(cfg: TrainConfig):
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
 
-    # Create data loaders
     train_indist_loader = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
@@ -119,14 +114,7 @@ def train(cfg: TrainConfig):
         openimages_max_samples=cfg.openimages_max_samples,
         openimages_augm=cfg.openimages_augm,
     ))
-    # test_indist_iter = infinite_iter(
-    #     cfg.get_indist_dataloader(split="val", shuffle=True)
-    # )
-    # test_outdist_iter = infinite_iter(
-    #     cfg.get_outdist_dataloader(split="val", shuffle=True)
-    # )
 
-    # Initialize model, criterion, optimizer
     model = rebm.training.modeling.get_model(
         model_config=cfg.model,
         device=cfg.device,
@@ -165,7 +153,6 @@ def train(cfg: TrainConfig):
         criterion=criterion_xent,
     )
 
-    # Create evaluation dataloaders outside the training loop
     train_loader_for_eval = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
@@ -194,8 +181,6 @@ def train(cfg: TrainConfig):
         f"indist dataset classes: {train_indist_loader.dataset.classes}"
     )
 
-    # Training loop
-    # We iteratively increase strength of out-distribution attack
     indist_epoch = 0
     max_epochs_reached = False
     for cur_outdist_steps in range(
@@ -213,7 +198,6 @@ def train(cfg: TrainConfig):
                 train_indist_loader
             )
 
-            # Interrupt training if indist_epoch exceeds total_epochs (if set)
             if (
                 cfg.total_epochs is not None
                 and indist_epoch >= cfg.total_epochs
@@ -224,7 +208,6 @@ def train(cfg: TrainConfig):
                 max_epochs_reached = True
                 break
 
-            # Update learning rate based on current epoch only for SGD optimizer
             if cfg.optimizer == "sgd" and not cfg.fixed_lr:
                 current_lr = get_lr_for_epoch(
                     cfg.lr,
@@ -235,7 +218,6 @@ def train(cfg: TrainConfig):
                 for param_group in optimizer.param_groups:
                     param_group["lr"] = current_lr
 
-            # Always log the current learning rate
             current_lr = optimizer.param_groups[0]["lr"]
 
             wandb.log(
@@ -330,7 +312,6 @@ def train(cfg: TrainConfig):
                 )
                 eval_model.eval()
 
-                # Create a dictionary to store all classification metrics
                 metrics_dict = {
                     "train_acc": None,
                     "test_acc": None,
@@ -340,13 +321,7 @@ def train(cfg: TrainConfig):
                     "robust_test_acc": None,
                 }
 
-                # Always evaluate standard (pre-calibration) accuracy
                 LOGGER.info("Evaluating standard accuracy...")
-                # metrics_dict["train_acc"] = eval_acc(
-                #     model=eval_model,
-                #     dataloader=train_loader_for_eval,
-                #     device=cfg.device,
-                # )
                 metrics_dict["test_acc"] = eval_acc(
                     model=eval_model,
                     dataloader=test_loader_for_eval,
@@ -361,10 +336,8 @@ def train(cfg: TrainConfig):
                     f"Standard Acc - Train: {metrics_dict['train_acc']}, Test: {metrics_dict['test_acc']:.4f}"
                 )
 
-                # Optionally evaluate robust accuracy
                 if cfg.robust_eval:
                     LOGGER.info("Evaluating robust accuracy...")
-                    # Prepare attack kwargs from indist_attack_xent config if available
                     attack_kwargs = None
                     if cfg.indist_attack_xent is not None:
                         attack_kwargs = {
@@ -374,14 +347,6 @@ def train(cfg: TrainConfig):
                             "steps": cfg.indist_attack_xent.max_steps,
                             "random_start": False,
                         }
-
-                    # metrics_dict["robust_train_acc"] = eval_robust_acc(
-                    #     model=eval_model,
-                    #     dataloader=train_loader_for_eval,
-                    #     device=cfg.device,
-                    #     percentage=20,
-                    #     attack_kwargs=attack_kwargs,
-                    # )
 
                     metrics_dict["robust_test_acc"] = eval_robust_acc(
                         model=eval_model,
@@ -399,7 +364,6 @@ def train(cfg: TrainConfig):
                         f"Robust Acc - Train: {metrics_dict['robust_train_acc']}, Test: {metrics_dict['robust_test_acc']:.4f}"
                     )
 
-                # Update all metrics using dictionary unpacking
                 is_new_best_acc = classification_metrics.update(**metrics_dict)
                 if is_new_best_acc:
                     if cfg.use_ema:
@@ -443,7 +407,6 @@ def train(cfg: TrainConfig):
                     with torch.no_grad():
                         non_parallel_avg_model.update_parameters(model.module)
                 
-                # print(f"Step {global_step_one_indexed:04d} - Training Loss (indist_only): {xent_loss.item():.6f}")
                 
                 if global_step_one_indexed % 20 == 0:
                     LOGGER.info(
@@ -511,7 +474,6 @@ def train(cfg: TrainConfig):
                 with torch.no_grad():
                     non_parallel_avg_model.update_parameters(model.module)
 
-            # print(f"Step {global_step_one_indexed:04d} - Training Loss: {train_metrics.loss.item():.6f}")
 
             if global_step_one_indexed % 20 == 0:
                 train_metrics_dict = train_metrics.to_simple_dict()
@@ -529,14 +491,12 @@ def train(cfg: TrainConfig):
                     f"{metrics_str}"
                 )
 
-            # Define the log_interval in the config
             if is_metric_logging_step:
                 wandb.log(
                     dict_append_label(train_metrics.to_simple_dict(), "train_"),
                     step=global_step_one_indexed * cfg.batch_size,
                 )
 
-            # Log images infrequently
             if is_image_logging_step:
                 for label, imgs in [
                     ("train_indist_imgs_xent", train_indist_imgs_xent),
@@ -578,7 +538,6 @@ def train(cfg: TrainConfig):
                 )
                 break
 
-        # Check if max epochs was reached in the inner loop
         if max_epochs_reached:
             break
 
@@ -613,8 +572,6 @@ if __name__ == "__main__":
     # We just save them on disk for now.
     os.environ["WANDB_IGNORE_GLOBS"] = "*.pth"
 
-    # Initialize wandb
-    # Use WANDB_NAME environment variable if set, otherwise use config file stem
     run_name = os.environ.get("WANDB_NAME", Path(config_file).stem)
     wandb.init(
         project=cfg.wandb_project,
@@ -627,8 +584,6 @@ if __name__ == "__main__":
     )
     LOGGER.info(f"Using device: {cfg.device}")
 
-    # setting benchmark to True enables better performance on fixed input sizes.
-    # https://discuss.pytorch.org/t/what-does-torch-backends-cudnn-benchmark-do/5936
     torch.backends.cudnn.benchmark = True
 
     train(cfg)
