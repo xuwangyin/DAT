@@ -129,6 +129,38 @@ def log_generate_images(
     return gen_imgs
 
 
+def log_generation(model: nn.Module, cfg) -> tuple[float | None, torch.Tensor | None]:
+    """Compute FID (if enabled) and sample images for logging."""
+    assert_no_grad(model)
+    fid, gen_imgs = None, None
+    model.eval()
+
+    if cfg.image_log.log_fid:
+        if cfg.image_log.adaptive_steps:
+            optimal_steps = find_optimal_steps(cfg, model)
+            fid = compute_fid(
+                model=model,
+                cfg=cfg,
+                override_fid_cfg={"num_steps": optimal_steps},
+            )
+        else:
+            fid = compute_fid(
+                model=model,
+                cfg=cfg,
+            )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    gen_imgs = log_generate_images(
+        cfg=cfg,
+        model=model,
+        samples=10,
+    )
+
+    return fid, gen_imgs
+
+
 def find_optimal_steps(cfg, model: nn.Module) -> int:
     if not cfg.image_log.adaptive_steps:
         return cfg.image_log.num_steps

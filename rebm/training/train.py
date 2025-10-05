@@ -35,7 +35,6 @@ from timm.models.layers import trunc_normal_
 from torch import nn
 from torchvision import datasets
 
-import InNOutRobustness.utils.datasets as dl
 from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import get_imageNet_augmentation
 
 # import rebm.models.bat
@@ -70,7 +69,6 @@ from rebm.training.config_classes import (
     create_model_config,
 )
 from rebm.training.eval_utils import (
-    compute_fid,
     compute_img_diff,
     eval_acc,
     eval_robust_acc,
@@ -79,9 +77,9 @@ from rebm.training.eval_utils import (
     generate_indist_adv_images,
     generate_outdist_adv_images,
     get_auc,
-    log_generate_images,
-    ood_detection,
+    log_generation,
 )
+from rebm.training.ood import run_ood_evaluation
 from rebm.utils import assert_no_grad, load_state_dict, remap_checkpoint_keys
 from rebm.training.utils_architecture import replace_convstem
 
@@ -229,40 +227,6 @@ class TrainConfig:
     def device(self) -> torch.device:
         return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-
-def log_generation(model, cfg):
-    assert_no_grad(model)
-    fid, gen_imgs = None, None
-    model.eval()
-    if cfg.image_log.log_fid:
-        if cfg.image_log.adaptive_steps:
-            from rebm.training.eval_utils import find_optimal_steps
-            optimal_steps = find_optimal_steps(cfg, model)
-            fid = compute_fid(
-                model=model,
-                cfg=cfg,
-                override_fid_cfg={'num_steps': optimal_steps}
-            )
-        else:
-            fid = compute_fid(
-                model=model,
-                cfg=cfg,
-            )
-        
-        # Free CUDA memory after FID computation
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
-    gen_imgs = log_generate_images(
-        cfg=cfg,
-        model=model,
-        samples=10,
-    )
-
-    return fid, gen_imgs
-
-
 def train(cfg: TrainConfig):
     np.random.seed(cfg.rand_seed)
     torch.manual_seed(cfg.rand_seed)
@@ -298,90 +262,7 @@ def train(cfg: TrainConfig):
         
     # Perform OOD detection evaluation if requested
     if cfg.evaluate_ood_detection:
-        LOGGER.info(
-            "OOD detection evaluation requested. Initializing model..."
-        )
-        model = rebm.training.modeling.get_model(
-            model_config=cfg.model,
-            device=cfg.device,
-            num_classes=cfg.data.num_classes,
-            indist_dataset=cfg.data.indist_dataset,
-            resume_path=cfg.resume_path,
-        ).to(cfg.device)
-        model.eval()  # Ensure model is in evaluation mode
-
-        # Create data loaders for in-distribution and out-of-distribution data
-        indist_loader = rebm.training.data.get_indist_dataloader(
-            config=cfg.data,
-            batch_size=cfg.batch_size,
-            split='test',
-            shuffle=False,
-            augm_type="none",  # No augmentation for clean evaluation
-            balanced=True,
-        )
-
-        # Use specified dataset as the out-of-distribution dataset for detection
-        LOGGER.info(f"Using {cfg.outdist_dataset_ood_detection} as OOD dataset for detection")
-        
-        # Set image size based on in-distribution dataset
-        if cfg.data.indist_dataset in ["cifar10-conditional", "cifar100-conditional"]:
-            size = 32
-        elif cfg.data.indist_dataset in ["RestrictedImageNet", "ImageNet"]:
-            size = 224
-        else:
-            # Default size for other datasets
-            size = 32
-            
-        LOGGER.info(f"Using image size {size} for OOD detection based on in-distribution dataset: {cfg.data.indist_dataset}")
-        
-        match cfg.outdist_dataset_ood_detection:
-            case "noise":
-                outdist_loader = dl.get_noise_dataset(
-                    type="uniform",
-                    length=1024,
-                    size=size,
-                    augm_type="none",
-                    batch_size=cfg.batch_size,
-                )
-            case "svhn":
-                outdist_loader = dl.get_SVHN(
-                    split='train',
-                    batch_size=cfg.batch_size,
-                    shuffle=True,
-                    augm_type="none",
-                    size=size,
-                )
-            case "cifar100":
-                outdist_loader = dl.get_CIFAR100(
-                    train=True,
-                    batch_size=cfg.batch_size,
-                    shuffle=True,
-                    augm_type="none",
-                    size=size,
-                )
-            case "cifar10":
-                outdist_loader = dl.get_CIFAR10(
-                    train=True,
-                    batch_size=cfg.batch_size,
-                    shuffle=True,
-                    augm_type="none",
-                    size=size,
-                )
-            case "imagenet":
-                outdist_loader = dl.get_restrictedImageNetOD(
-                    train=False,
-                    batch_size=cfg.batch_size,
-                    shuffle=True,
-                    augm_type="none",
-                    size=size,
-                    path='./data/ImageNet',
-                )
-            case _:
-                raise ValueError(f"Unknown outdist_dataset_ood_detection: {cfg.outdist_dataset_ood_detection}")
-
-        LOGGER.info("Starting OOD detection evaluation...")
-        clean_auroc, adv_auroc = ood_detection(model, indist_loader, outdist_loader, cfg)
-        LOGGER.info(f"OOD detection evaluation completed. ID: {cfg.data.indist_dataset}, OD: {cfg.outdist_dataset_ood_detection}, Clean AUROC: {clean_auroc:.4f}, Adversarial AUROC: {adv_auroc:.4f}")
+        run_ood_evaluation(cfg)
         return
 
     image_generation_metrics = ImageGenerationMetrics()
@@ -419,7 +300,13 @@ def train(cfg: TrainConfig):
     # )
 
     # Initialize model, criterion, optimizer
-    model = cfg.get_model().to(cfg.device)
+    model = rebm.training.modeling.get_model(
+        model_config=cfg.model,
+        device=cfg.device,
+        num_classes=cfg.data.num_classes,
+        indist_dataset=cfg.data.indist_dataset,
+        resume_path=cfg.resume_path,
+    )
     if cfg.use_ema:
         non_parallel_avg_model = AveragedModel(
             model.module,
