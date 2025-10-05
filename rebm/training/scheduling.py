@@ -1,6 +1,46 @@
 """Training event scheduling utilities."""
 
 
+def get_lr_for_epoch(
+    base_lr: float, epoch: int, total_epochs: int, dataset=None
+) -> float:
+    """
+    Implements a stepwise learning rate decay with three phases:
+    1. For the first 50% of training epochs, the learning rate remains at its maximum
+    2. Between 50% and 75% of epochs, it decreases by a factor of 10
+    3. In the final 25% of training, it further drops by a factor of 100
+
+    Args:
+        base_lr: The initial (maximum) learning rate
+        epoch: Current epoch (0-indexed)
+        total_epochs: Total number of epochs for training
+        dataset: Optional dataset name for dataset-specific schedules
+
+    Returns:
+        The learning rate for the current epoch
+    """
+    if dataset in ["RestrictedImageNet", "ImageNet"]:
+        assert total_epochs == 75
+        if epoch < 30:
+            return base_lr
+        elif epoch < 60:
+            return base_lr / 10.0
+        elif epoch < 75:
+            return base_lr / 100.0
+        else:
+            return base_lr / 1000.0
+    else:
+        if epoch > 200:
+            # Adversarial Robustness on In- and Out-Distribution Improves Explainability
+            return base_lr / 1000.0
+        if epoch < total_epochs * 0.5:
+            return base_lr
+        elif epoch < total_epochs * 0.75:
+            return base_lr / 10.0
+        else:
+            return base_lr / 100.0
+
+
 def should_trigger_event(
     global_step_one_indexed: int,
     batch_size: int,

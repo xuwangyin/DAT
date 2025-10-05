@@ -7,10 +7,12 @@ from timm.models.resnet import wide_resnet50_4 as WideResNet50x4ImageNet
 from timm.models.convnext import convnext_tiny, convnext_base, convnext_small, convnext_large
 
 import collections
+import copy
 import dataclasses
 import hashlib
 import json
 import logging
+import math
 import os
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -57,7 +59,7 @@ from rebm.training.metrics import (
     compute_training_metrics,
     compute_training_metrics_xent,
 )
-from rebm.training.scheduling import should_trigger_event
+from rebm.training.scheduling import get_lr_for_epoch, should_trigger_event
 from rebm.training.average_model import AveragedModel
 from rebm.training.calibration import eval_calibration
 from rebm.training.config_classes import (
@@ -91,9 +93,6 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 
-def ceil_div(a: int, b: int) -> int:
-    return -(-a // b)
-
 
 def infinite_iter(iterable: Iterable):
     while True:
@@ -101,61 +100,8 @@ def infinite_iter(iterable: Iterable):
             yield x
 
 
-def get_lr_for_epoch(
-    base_lr: float, epoch: int, total_epochs: int, dataset=None
-) -> float:
-    """
-    Implements a stepwise learning rate decay with three phases:
-    1. For the first 50% of training epochs, the learning rate remains at its maximum
-    2. Between 50% and 75% of epochs, it decreases by a factor of 10
-    3. In the final 25% of training, it further drops by a factor of 100
-
-    Args:
-        base_lr: The initial (maximum) learning rate
-        epoch: Current epoch (0-indexed)
-        total_epochs: Total number of epochs for training
-
-    Returns:
-        The learning rate for the current epoch
-    """
-    if dataset in ["RestrictedImageNet", "ImageNet"]:
-        assert total_epochs == 75
-        if epoch < 30:
-            return base_lr
-        elif epoch < 60:
-            return base_lr / 10.0
-        elif epoch < 75:
-            return base_lr / 100.0
-        else:
-            return base_lr / 1000.0
-    else:
-        if epoch > 200:
-            # Adversarial Robustness on In- and Out-Distribution Improves Explainability
-            return base_lr / 1000.0
-        if epoch < total_epochs * 0.5:
-            return base_lr
-        elif epoch < total_epochs * 0.75:
-            return base_lr / 10.0
-        else:
-            return base_lr / 100.0
-
-
 def dict_append_label(d: dict, label: str) -> dict:
     return {label + k: v for k, v in d.items()}
-
-
-def recursive_asdict(obj):
-    """Recursively converts dataclass instances to dictionaries."""
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {
-            k: recursive_asdict(v) for k, v in dataclasses.asdict(obj).items()
-        }
-    elif isinstance(obj, list):
-        return [recursive_asdict(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: recursive_asdict(v) for k, v in obj.items()}
-    else:
-        return obj
 
 
 @dataclasses.dataclass
@@ -542,10 +488,10 @@ def train(cfg: TrainConfig):
         cfg.attack.start_step, cfg.attack.max_steps + 1
     ):
         train_adv_auc_deque = collections.deque(
-            maxlen=ceil_div(cfg.min_imgs_per_threshold, cfg.batch_size)
+            maxlen=math.ceil(cfg.min_imgs_per_threshold / cfg.batch_size)
         )
         train_clean_auc_deque = collections.deque(
-            maxlen=ceil_div(cfg.min_imgs_per_threshold, cfg.batch_size)
+            maxlen=math.ceil(cfg.min_imgs_per_threshold / cfg.batch_size)
         )
         for local_step, train_indist_batch in enumerate(train_indist_iter):
             global_step_one_indexed += 1
@@ -991,8 +937,9 @@ if __name__ == "__main__":
         override_cfg = OmegaConf.from_dotlist(overrides)
         omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
 
-    # Convert to dict and create nested config objects
-    config_dict = OmegaConf.to_container(omega_cfg, resolve=True)
+    # Convert configs to plain containers for logging and dataclass instantiation
+    config_for_wandb = OmegaConf.to_container(omega_cfg, resolve=True)
+    config_dict = copy.deepcopy(config_for_wandb)
 
     # Create nested configs manually to ensure proper types
     config_dict['data'] = DataConfig(**config_dict.get('data', {}))
@@ -1022,14 +969,13 @@ if __name__ == "__main__":
         save_code=True,
         mode="disabled" if cfg.wandb_disabled else "online",
         name=run_name,
+        config=config_for_wandb,
     )
 
     # Set image_log.save_dir using wandb run ID if not specified
     if cfg.image_log.save_dir is None:
         cfg.image_log.save_dir = f"{cfg.wandb_dir}/eval_fid/{wandb.run.id}"
-
-    print(recursive_asdict(cfg))
-    wandb.config.update(recursive_asdict(cfg))
+    print(config_for_wandb)
     LOGGER.info(f"Using device: {cfg.device}")
 
     # setting benchmark to True enables better performance on fixed input sizes.
