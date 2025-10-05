@@ -58,7 +58,6 @@ from rebm.training.eval_utils import (
     compute_img_diff,
     eval_acc,
     eval_robust_acc,
-    generate_counterfactuals,
     generate_images,
     generate_indist_adv_images,
     generate_outdist_adv_images,
@@ -93,34 +92,6 @@ def train(cfg: TrainConfig):
     torch.manual_seed(cfg.rand_seed)
     global_step_one_indexed: int = 0
 
-    # Generate counterfactuals if requested
-    if cfg.use_counterfactuals:
-        LOGGER.info(
-            "Counterfactual generation requested. Initializing model..."
-        )
-        model = rebm.training.modeling.get_model(
-            model_config=cfg.model,
-            device=cfg.device,
-            num_classes=cfg.data.num_classes,
-            indist_dataset=cfg.data.indist_dataset,
-            resume_path=cfg.resume_path,
-        ).to(cfg.device)
-        model.eval()  # Ensure model is in evaluation mode
-
-        # Create data loader specifically for counterfactual generation
-        train_loader_for_counterfactuals = rebm.training.data.get_indist_dataloader(
-            config=cfg.data,
-            batch_size=cfg.batch_size,
-            split='train',
-            shuffle=False,
-            augm_type="none",  # No augmentation for clean reference images
-        )
-
-        LOGGER.info("Starting counterfactual generation process...")
-        generate_counterfactuals(model, train_loader_for_counterfactuals, cfg)
-        LOGGER.info("Counterfactual generation completed. Exiting.")
-        return
-        
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
 
