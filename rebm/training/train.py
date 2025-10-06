@@ -1,66 +1,36 @@
-import sys
-
-sys.path.insert(0, "pytorch-image-models")
-from timm.models.resnet import resnet50 as ResNet50ImageNet
-from timm.models.resnet import wide_resnet50_2 as WideResNet50x2ImageNet
-from timm.models.resnet import wide_resnet50_4 as WideResNet50x4ImageNet
-from timm.models.convnext import convnext_tiny, convnext_base, convnext_small, convnext_large
-
 import collections
 import dataclasses
 import logging
 import math
 import os
-
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
+import sys
 from pathlib import Path
 from typing import Iterable
 
-import einops
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+sys.path.insert(0, "pytorch-image-models")
+
 import numpy as np
 import torch
 import torch.utils.data
 import torchvision.utils
 import wandb
 from torch import nn
-from torchvision import datasets
 
-from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import get_imageNet_augmentation
-import rebm.models.preactresnet
-import rebm.models.robustness_resnet_cifar10
-import rebm.models.wide_resnet_innoutrobustness
-import rebm.models.resnet
-import rebm.training.adv_attacks
 import rebm.training.data
 import rebm.training.misc
 import rebm.training.modeling
-from rebm.training.adv_attacks import pgd_attack, pgd_attack_xent
+from rebm.training.average_model import AveragedModel
+from rebm.training.config_classes import TrainConfig, load_train_config
+from rebm.training.eval_utils import eval_acc, eval_robust_acc, evaluate_image_generation
 from rebm.training.metrics import (
     ClassificationMetrics,
     ImageGenerationMetrics,
-    Metrics,
     TrainingMetrics,
-    compute_metrics,
-    compute_testing_metrics,
     compute_training_metrics,
     compute_training_metrics_xent,
 )
 from rebm.training.scheduling import get_lr_for_epoch, should_trigger_event
-from rebm.training.average_model import AveragedModel
-from rebm.training.calibration import eval_calibration
-from rebm.training.config_classes import TrainConfig, load_train_config
-from rebm.training.eval_utils import (
-    compute_img_diff,
-    eval_acc,
-    eval_robust_acc,
-    evaluate_image_generation,
-    generate_images,
-    generate_indist_adv_images,
-    generate_outdist_adv_images,
-    get_auc,
-)
-from rebm.utils import assert_no_grad, load_state_dict, remap_checkpoint_keys
-from rebm.training.utils_architecture import replace_convstem
 
 logging.basicConfig(
     level=logging.INFO,
