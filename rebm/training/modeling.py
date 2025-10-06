@@ -17,7 +17,14 @@ import rebm.models.robustness_resnet_cifar10
 import rebm.models.wide_resnet_innoutrobustness
 import rebm.training.misc
 from rebm.training.config_classes import BaseModelConfig
-from rebm.training.utils_architecture import replace_convstem
+
+# TODO: Fix import order issue with timm
+# utils_architecture.py imports timm without sys.path.insert, which causes
+# system timm (v1.0.15) to be cached in sys.modules before our local
+# pytorch-image-models timm can be loaded. This breaks imports like
+# wide_resnet50_4 which don't exist in system timm.
+# Workaround: Commented out until utils_architecture.py adds sys.path.insert
+# from rebm.training.utils_architecture import replace_convstem
 
 # Import model classes that need to be available globally
 from timm.models.resnet import resnet50 as ResNet50ImageNet

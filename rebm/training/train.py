@@ -121,7 +121,7 @@ def evaluate_and_log_fid(
     cfg: TrainConfig,
     image_generation_metrics: ImageGenerationMetrics,
     global_step: int,
-) -> bool:
+) -> None:
     """Evaluate FID and save best model if improved.
 
     Args:
@@ -129,9 +129,6 @@ def evaluate_and_log_fid(
         cfg: Training configuration
         image_generation_metrics: Metrics tracker for image generation
         global_step: Current global step (1-indexed)
-
-    Returns:
-        True if should exit training (eval_only mode), False otherwise
     """
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
@@ -140,9 +137,6 @@ def evaluate_and_log_fid(
     LOGGER.info(
         f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}"
     )
-
-    if cfg.eval_only:
-        return True
 
     is_new_best = image_generation_metrics.update(fid, gen_imgs)
     if is_new_best:
@@ -155,7 +149,6 @@ def evaluate_and_log_fid(
         dataclasses.asdict(image_generation_metrics),
         step=n_imgs_seen,
     )
-    return False
 
 
 def evaluate_and_log_accuracy(
@@ -374,14 +367,12 @@ def train(cfg: TrainConfig):
             if is_evaluation_step and not cfg.indist_train_only:
                 model.zero_grad()
                 model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
-                should_exit = evaluate_and_log_fid(
+                evaluate_and_log_fid(
                     model_to_eval,
                     cfg,
                     image_generation_metrics,
                     global_step_one_indexed,
                 )
-                if should_exit:
-                    return
 
             if is_evaluation_step and cfg.data.num_classes > 1:
                 model.eval()

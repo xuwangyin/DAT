@@ -33,9 +33,25 @@ from pytorch_fid.fid_score import calculate_fid_given_paths
 
 from rebm.training.adv_attacks import adam_attack, pgd_attack, pgd_attack_xent
 from rebm.training.inception_score import compute_inception_score
-from rebm.utils import assert_no_grad
 
 LOGGER = logging.getLogger(__name__)
+
+
+def assert_no_grad(model):
+    """
+    Assert that all gradients in the model are either None or zeros.
+
+    Args:
+        model: PyTorch model to check
+
+    Raises:
+        AssertionError: If any parameter gradients are neither None nor zero
+    """
+    for p in model.parameters():
+        if p.grad is not None and not torch.all(p.grad.eq(0)):
+            raise AssertionError(
+                "Some parameter gradients are neither None nor zero."
+            )
 
 
 def compute_img_diff(
