@@ -22,7 +22,6 @@ import torch
 import torch.utils.data
 import torchvision.utils
 import wandb
-from timm.models.layers import trunc_normal_
 from torch import nn
 from torchvision import datasets
 
@@ -582,7 +581,7 @@ if __name__ == "__main__":
 
     args = sys.argv[1:]
 
-    if not args or args[0] in ["-h", "--help"]:
+    if not args or "-h" in args or "--help" in args:
         print("Training script with OmegaConf for configuration management")
         print("\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]")
         print("\nExamples:")

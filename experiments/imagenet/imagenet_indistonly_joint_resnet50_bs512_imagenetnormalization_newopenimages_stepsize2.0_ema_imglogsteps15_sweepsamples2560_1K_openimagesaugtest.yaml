@@ -91,7 +91,6 @@ tinyimages_loader: "innout"
 fixed_lr: true
 
 # Optional parameters (will use default paths if not specified)
-resume_path: null
 wandb_dir: "wandb/robust-ebms-2"
 use_ema: true
 logsumexp: true
