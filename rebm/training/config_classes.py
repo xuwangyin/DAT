@@ -154,7 +154,7 @@ class TrainConfig:
     indist_clean_extra: bool = False
     fp16: bool = False
     samples_per_attack_step: int | None = None
-    n_imgs_per_classification_log: int | None = None
+    n_imgs_per_evaluation_log: int | None = None  # Controls both FID and accuracy evaluation
     use_ema: bool = False
 
     # Evaluation parameters

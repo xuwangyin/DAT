@@ -348,18 +348,12 @@ def train(cfg: TrainConfig):
                 batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_image_log,
             )
-            is_fid_logging_step = should_trigger_event(
-                global_step_one_indexed=global_step_one_indexed,
-                batch_size=cfg.batch_size,
-                interval_in_imgs=cfg.n_imgs_per_image_log,
-            )
-            is_acc_logging_step = (
-                cfg.data.num_classes > 1
-                and cfg.n_imgs_per_classification_log is not None
+            is_evaluation_step = (
+                cfg.n_imgs_per_evaluation_log is not None
                 and should_trigger_event(
                     global_step_one_indexed=global_step_one_indexed,
                     batch_size=cfg.batch_size,
-                    interval_in_imgs=cfg.n_imgs_per_classification_log,
+                    interval_in_imgs=cfg.n_imgs_per_evaluation_log,
                 )
             )
             is_checkpoint_save_step = should_trigger_event(
@@ -377,7 +371,7 @@ def train(cfg: TrainConfig):
                     step=global_step_one_indexed,
                 )
 
-            if is_fid_logging_step and not cfg.indist_train_only:
+            if is_evaluation_step and not cfg.indist_train_only:
                 model.zero_grad()
                 model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
                 should_exit = evaluate_and_log_fid(
@@ -389,7 +383,7 @@ def train(cfg: TrainConfig):
                 if should_exit:
                     return
 
-            if is_acc_logging_step:
+            if is_evaluation_step and cfg.data.num_classes > 1:
                 model.eval()
                 model.zero_grad()
                 model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
