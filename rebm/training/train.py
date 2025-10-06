@@ -28,7 +28,7 @@ from rebm.training.metrics import (
     ImageGenerationMetrics,
     TrainingMetrics,
     compute_training_metrics,
-    compute_training_metrics_xent,
+    compute_training_metrics_clf,
 )
 from rebm.training.scheduling import get_lr_for_epoch, should_trigger_event
 
@@ -39,6 +39,16 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
+
+@dataclasses.dataclass
+class Dataloaders:
+    """Container for all dataloaders used during training."""
+    train_indist_loader: torch.utils.data.DataLoader
+    train_indist_loader_clf: torch.utils.data.DataLoader
+    train_indist_iter: Iterable
+    train_indist_iter_clf: Iterable
+    train_outdist_iter: Iterable
+    test_loader_for_eval: torch.utils.data.DataLoader
 
 
 def infinite_iter(iterable: Iterable):
@@ -51,15 +61,15 @@ def dict_append_label(d: dict, label: str) -> dict:
     return {label + k: v for k, v in d.items()}
 
 
-def create_dataloaders(cfg: TrainConfig) -> dict:
+def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
     """Create all dataloaders needed for training.
 
     Returns:
-        dict with keys:
+        Dataloaders instance containing:
             - train_indist_loader: Loader for in-distribution training (generation augmentation)
-            - train_indist_loader_xent: Loader for in-distribution training (classification augmentation)
+            - train_indist_loader_clf: Loader for in-distribution training (classification augmentation)
             - train_indist_iter: Infinite iterator for train_indist_loader
-            - train_indist_iter_xent: Infinite iterator for train_indist_loader_xent
+            - train_indist_iter_clf: Infinite iterator for train_indist_loader_clf
             - train_outdist_iter: Infinite iterator for out-distribution data
             - test_loader_for_eval: Loader for test set evaluation
     """
@@ -69,7 +79,7 @@ def create_dataloaders(cfg: TrainConfig) -> dict:
         shuffle=True,
         augm_type=cfg.augm_type_generation
     )
-    train_indist_loader_xent = rebm.training.data.get_indist_dataloader(
+    train_indist_loader_clf = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
         shuffle=True,
@@ -92,14 +102,14 @@ def create_dataloaders(cfg: TrainConfig) -> dict:
         augm_type="none" if 'cifar' in cfg.data.indist_dataset else "test"
     )
 
-    return {
-        'train_indist_loader': train_indist_loader,
-        'train_indist_loader_xent': train_indist_loader_xent,
-        'train_indist_iter': infinite_iter(train_indist_loader),
-        'train_indist_iter_xent': infinite_iter(train_indist_loader_xent),
-        'train_outdist_iter': train_outdist_iter,
-        'test_loader_for_eval': test_loader_for_eval,
-    }
+    return Dataloaders(
+        train_indist_loader=train_indist_loader,
+        train_indist_loader_clf=train_indist_loader_clf,
+        train_indist_iter=infinite_iter(train_indist_loader),
+        train_indist_iter_clf=infinite_iter(train_indist_loader_clf),
+        train_outdist_iter=train_outdist_iter,
+        test_loader_for_eval=test_loader_for_eval,
+    )
 
 
 def log_image_grid(label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int) -> None:
@@ -197,12 +207,12 @@ def evaluate_and_log_accuracy(
     if cfg.robust_eval:
         LOGGER.info("Evaluating robust accuracy...")
         attack_kwargs = None
-        if cfg.indist_attack_xent is not None:
+        if cfg.indist_attack_clf is not None:
             attack_kwargs = {
                 "norm": "L2",
-                "eps": cfg.indist_attack_xent.eps,
-                "step_size": cfg.indist_attack_xent.step_size,
-                "steps": cfg.indist_attack_xent.max_steps,
+                "eps": cfg.indist_attack_clf.eps,
+                "step_size": cfg.indist_attack_clf.step_size,
+                "steps": cfg.indist_attack_clf.max_steps,
                 "random_start": False,
             }
 
@@ -243,12 +253,12 @@ def train(cfg: TrainConfig):
 
     # Create all dataloaders
     dataloaders = create_dataloaders(cfg)
-    train_indist_loader = dataloaders['train_indist_loader']
-    train_indist_loader_xent = dataloaders['train_indist_loader_xent']
-    train_indist_iter = dataloaders['train_indist_iter']
-    train_indist_iter_xent = dataloaders['train_indist_iter_xent']
-    train_outdist_iter = dataloaders['train_outdist_iter']
-    test_loader_for_eval = dataloaders['test_loader_for_eval']
+    train_indist_loader = dataloaders.train_indist_loader
+    train_indist_loader_clf = dataloaders.train_indist_loader_clf
+    train_indist_iter = dataloaders.train_indist_iter
+    train_indist_iter_clf = dataloaders.train_indist_iter_clf
+    train_outdist_iter = dataloaders.train_outdist_iter
+    test_loader_for_eval = dataloaders.test_loader_for_eval
 
     model = rebm.training.modeling.get_model(
         model_config=cfg.model,
@@ -257,7 +267,7 @@ def train(cfg: TrainConfig):
         indist_dataset=cfg.data.indist_dataset,
     )
     if cfg.use_ema:
-        non_parallel_avg_model = AveragedModel(
+        ema_model = AveragedModel(
             model.module,
             avg_type="ema",
             ema_decay=0.999,
@@ -266,7 +276,7 @@ def train(cfg: TrainConfig):
         )
 
     criterion = nn.BCEWithLogitsLoss(reduction="mean")
-    criterion_xent = nn.CrossEntropyLoss(reduction="mean")
+    criterion_clf = nn.CrossEntropyLoss(reduction="mean")
     optimizer = rebm.training.modeling.get_optimizer(
         model=model,
         optimizer_name=cfg.optimizer,
@@ -280,10 +290,10 @@ def train(cfg: TrainConfig):
         criterion=criterion,
     )
 
-    get_metrics_shared_kwargs_xent = dict(
+    get_metrics_shared_kwargs_clf = dict(
         model=model,
         cfg=cfg,
-        criterion=criterion_xent,
+        criterion=criterion_clf,
     )
 
     LOGGER.info(
@@ -357,7 +367,7 @@ def train(cfg: TrainConfig):
             )
 
             if is_checkpoint_save_step:
-                model_to_save = non_parallel_avg_model.module if cfg.use_ema else model.module
+                model_to_save = ema_model.module if cfg.use_ema else model.module
                 rebm.training.modeling.save_checkpoint(
                     model=model_to_save,
                     optimizer=optimizer,
@@ -366,7 +376,7 @@ def train(cfg: TrainConfig):
 
             if is_evaluation_step and not cfg.indist_train_only:
                 model.zero_grad()
-                model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
+                model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
                 evaluate_and_log_fid(
                     model_to_eval,
                     cfg,
@@ -377,7 +387,7 @@ def train(cfg: TrainConfig):
             if is_evaluation_step and cfg.data.num_classes > 1:
                 model.eval()
                 model.zero_grad()
-                model_to_eval = nn.DataParallel(non_parallel_avg_model) if cfg.use_ema else model
+                model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
                 evaluate_and_log_accuracy(
                     model_to_eval,
                     cfg,
@@ -397,35 +407,35 @@ def train(cfg: TrainConfig):
             optimizer.zero_grad()
             if cfg.indist_train_only:
                 model.train()
-                train_indist_imgs_xent, train_indist_labels_xent = next(
-                    train_indist_iter_xent
+                train_indist_imgs_clf, train_indist_labels_clf = next(
+                    train_indist_iter_clf
                 )
-                train_indist_imgs_xent = train_indist_imgs_xent.to(cfg.device)
-                train_indist_labels_xent = train_indist_labels_xent.to(
+                train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
+                train_indist_labels_clf = train_indist_labels_clf.to(
                     cfg.device
                 )
-                xent_loss = compute_training_metrics_xent(
-                    indist_imgs=train_indist_imgs_xent,
-                    indist_labels=train_indist_labels_xent,
-                    **get_metrics_shared_kwargs_xent,
+                clf_loss = compute_training_metrics_clf(
+                    indist_imgs=train_indist_imgs_clf,
+                    indist_labels=train_indist_labels_clf,
+                    **get_metrics_shared_kwargs_clf,
                 )
-                xent_loss.backward()
+                clf_loss.backward()
                 optimizer.step()
 
                 if cfg.use_ema:
                     with torch.no_grad():
-                        non_parallel_avg_model.update_parameters(model.module)
-                
-                
+                        ema_model.update_parameters(model.module)
+
+
                 if global_step_one_indexed % 20 == 0:
                     LOGGER.info(
                         f"Step {global_step_one_indexed:04d} - "
-                        f"xent_loss: {xent_loss.item():.5f}"
+                        f"clf_loss: {clf_loss.item():.5f}"
                     )
                 if is_image_logging_step:
                     log_image_grid(
-                        "train_indist_imgs_xent",
-                        train_indist_imgs_xent,
+                        "train_indist_imgs_clf",
+                        train_indist_imgs_clf,
                         cfg,
                         n_imgs_seen
                     )
@@ -438,39 +448,39 @@ def train(cfg: TrainConfig):
                 outdist_step=cur_outdist_steps,
                 **get_metrics_shared_kwargs,
             )
-            if cfg.indist_attack_xent is not None:
-                train_indist_imgs_xent, train_indist_labels_xent = next(
-                    train_indist_iter_xent
+            if cfg.indist_attack_clf is not None:
+                train_indist_imgs_clf, train_indist_labels_clf = next(
+                    train_indist_iter_clf
                 )
-                train_indist_imgs_xent = train_indist_imgs_xent.to(cfg.device)
-                train_indist_labels_xent = train_indist_labels_xent.to(
+                train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
+                train_indist_labels_clf = train_indist_labels_clf.to(
                     cfg.device
                 )
 
                 indist_samples_extra = None
                 indist_labels_extra = None
                 if cfg.indist_clean_extra:
-                    indist_batch_extra = next(train_indist_iter_xent)
+                    indist_batch_extra = next(train_indist_iter_clf)
                     indist_samples_extra = indist_batch_extra[0].to(cfg.device)
                     indist_labels_extra = indist_batch_extra[1].to(cfg.device)
 
-                xent_loss = compute_training_metrics_xent(
-                    indist_imgs=train_indist_imgs_xent,
-                    indist_labels=train_indist_labels_xent,
+                clf_loss = compute_training_metrics_clf(
+                    indist_imgs=train_indist_imgs_clf,
+                    indist_labels=train_indist_labels_clf,
                     indist_samples_extra=indist_samples_extra,
                     indist_labels_extra=indist_labels_extra,
-                    **get_metrics_shared_kwargs_xent,
+                    **get_metrics_shared_kwargs_clf,
                 )
             else:
-                xent_loss = 0.0
+                clf_loss = 0.0
             train_adv_auc_deque.append(train_metrics.adv_auc)
             train_clean_auc_deque.append(train_metrics.clean_auc)
-            (train_metrics.loss * cfg.bce_weight + xent_loss * cfg.xent_lr_multiplier).backward()
+            (train_metrics.loss * cfg.bce_weight + clf_loss * cfg.clf_lr_multiplier).backward()
             optimizer.step()
 
             if cfg.use_ema:
                 with torch.no_grad():
-                    non_parallel_avg_model.update_parameters(model.module)
+                    ema_model.update_parameters(model.module)
 
 
             if global_step_one_indexed % 20 == 0:
@@ -497,7 +507,7 @@ def train(cfg: TrainConfig):
 
             if is_image_logging_step:
                 for label, imgs in [
-                    ("train_indist_imgs_xent", train_indist_imgs_xent),
+                    ("train_indist_imgs_clf", train_indist_imgs_clf),
                     ("train_indist_imgs", train_metrics.indist_imgs),
                     ("train_outdist_imgs", train_metrics.outdist_imgs_clean),
                     ("train_error_imgs", train_metrics.outdist_imgs_error),

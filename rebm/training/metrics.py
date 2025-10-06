@@ -48,7 +48,7 @@ class Metrics:
 
 @dataclasses.dataclass
 class TrainingMetrics(Metrics):
-    xent: torch.Tensor | None = None
+    clf_loss: torch.Tensor | None = None
     loss: torch.Tensor | None = None
     r1: torch.Tensor | None = None
 
@@ -57,9 +57,9 @@ class TrainingMetrics(Metrics):
     adv_imgs: torch.Tensor | None = None
     outdist_imgs_error: torch.Tensor | None = None
 
-    xent_indist: torch.Tensor | None = None
-    xent_outdist: torch.Tensor | None = None
-    xent_adv: torch.Tensor | None = None
+    clf_indist: torch.Tensor | None = None
+    clf_outdist: torch.Tensor | None = None
+    clf_adv: torch.Tensor | None = None
 
     l2_dist_relative: float | None = None
 
@@ -316,12 +316,12 @@ def compute_training_metrics(
         logits = torch.cat([indist_logits, adv_logits])
         targets = torch.cat([indist_target, adv_target])
 
-    xent = criterion(logits, targets)
-    loss = xent + cfg.r1reg * r1
+    clf_loss = criterion(logits, targets)
+    loss = clf_loss + cfg.r1reg * r1
 
     ret_metrics_dict = dict(
         loss=loss,
-        xent=xent.detach().item(),
+        clf_loss=clf_loss.detach().item(),
         r1=r1.detach().item() if isinstance(r1, torch.Tensor) else r1,
         l2_dist_relative=l2_dist_relative,
         indist_imgs=indist_imgs.detach(),
@@ -334,7 +334,7 @@ def compute_training_metrics(
     return TrainingMetrics(**ret_metrics_dict)
 
 
-def compute_training_metrics_xent(
+def compute_training_metrics_clf(
     *,
     indist_imgs: torch.Tensor,
     indist_labels: torch.Tensor,
@@ -344,20 +344,20 @@ def compute_training_metrics_xent(
     indist_samples_extra: torch.Tensor = None,
     indist_labels_extra: torch.Tensor = None,
 ) -> torch.Tensor:
-    """Compute cross-entropy loss on adversarial in-distribution examples."""
+    """Compute classification loss on adversarial in-distribution examples."""
     assert (
-        cfg.indist_attack_xent.max_steps
-        == cfg.indist_attack_xent.fixed_steps
-        == cfg.indist_attack_xent.start_step
+        cfg.indist_attack_clf.max_steps
+        == cfg.indist_attack_clf.fixed_steps
+        == cfg.indist_attack_clf.start_step
     )
     indist_adv_imgs = pgd_attack_xent(
         model,
         indist_imgs,
         indist_labels,
         norm="L2",
-        eps=cfg.indist_attack_xent.eps,
-        step_size=cfg.indist_attack_xent.step_size,
-        steps=cfg.indist_attack_xent.max_steps,
+        eps=cfg.indist_attack_clf.eps,
+        step_size=cfg.indist_attack_clf.step_size,
+        steps=cfg.indist_attack_clf.max_steps,
     )
     indist_adv_logits = model(indist_adv_imgs)
 

@@ -16,7 +16,7 @@ attack:
   eps: .inf  # Perturbation limit for out-distribution adversarial attack
 
 # https://github.com/M4xim4l/InNOutRobustness/blob/d81d1d26e5ebc9193009e3d92bd67b5e01d6cfd6/utils/run_file_helpers.py#L255
-indist_attack_xent:
+indist_attack_clf:
   attack_type: "pgd"
   max_steps: 3  # Number of PGD steps for out-distribution adversarial attack
   fixed_steps: 3 # TODO
@@ -60,9 +60,9 @@ rand_seed: 0
 # ood_detection: false
 samples_per_attack_step: null
 
-xent_indist_weight: 1.0
-xent_outdist_weight: 0.0
-xent_adv_weight: 1.0
+clf_indist_weight: 1.0
+clf_outdist_weight: 0.0
+clf_adv_weight: 1.0
 r1_indist_weight: 1.0
 r1_outdist_weight: 0.0
 r1_adv_weight: 0.0

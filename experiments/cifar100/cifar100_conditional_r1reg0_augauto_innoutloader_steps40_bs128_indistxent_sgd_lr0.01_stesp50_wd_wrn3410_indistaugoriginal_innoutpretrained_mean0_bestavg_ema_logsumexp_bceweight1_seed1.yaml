@@ -16,7 +16,7 @@ attack:
   step_size: 0.1  # PGD attack step size
   eps: .inf  # Perturbation limit for out-distribution adversarial attack
 
-indist_attack_xent:
+indist_attack_clf:
   attack_type: "pgd"
   max_steps: 10  # Number of PGD steps for out-distribution adversarial attack
   fixed_steps: 10 # TODO
@@ -60,9 +60,9 @@ rand_seed: 1
 # ood_detection: false
 samples_per_attack_step: null
 
-xent_indist_weight: 1.0
-xent_outdist_weight: 0.0
-xent_adv_weight: 1.0
+clf_indist_weight: 1.0
+clf_outdist_weight: 0.0
+clf_adv_weight: 1.0
 r1_indist_weight: 1.0
 r1_outdist_weight: 0.0
 r1_adv_weight: 0.0

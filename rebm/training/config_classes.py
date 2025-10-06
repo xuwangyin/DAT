@@ -123,9 +123,9 @@ class TrainConfig:
     wd: float
     lr: float
     r1reg: float
-    xent_indist_weight: float
-    xent_outdist_weight: float
-    xent_adv_weight: float
+    clf_indist_weight: float
+    clf_outdist_weight: float
+    clf_adv_weight: float
     r1_indist_weight: float
     r1_outdist_weight: float
     r1_adv_weight: float
@@ -150,7 +150,7 @@ class TrainConfig:
     # Optional parameters
     indist_attack: AttackConfig | None = None
     indist_attack_only: bool = False
-    indist_attack_xent: AttackConfig | None = None
+    indist_attack_clf: AttackConfig | None = None
     indist_clean_extra: bool = False
     fp16: bool = False
     samples_per_attack_step: int | None = None
@@ -172,7 +172,7 @@ class TrainConfig:
     logsumexp: bool = True
     logsumexp_sampling: bool = False
     bce_weight: float = 1.0
-    xent_lr_multiplier: float = 1.0
+    clf_lr_multiplier: float = 1.0
     eval_only: bool = False
     use_counterfactuals: bool = False
     evaluate_ood_detection: bool = False
@@ -228,11 +228,11 @@ def load_train_config(
     if "indist_attack" in config_dict and config_dict["indist_attack"] is not None:
         config_dict["indist_attack"] = AttackConfig(**config_dict["indist_attack"])
     if (
-        "indist_attack_xent" in config_dict
-        and config_dict["indist_attack_xent"] is not None
+        "indist_attack_clf" in config_dict
+        and config_dict["indist_attack_clf"] is not None
     ):
-        config_dict["indist_attack_xent"] = AttackConfig(
-            **config_dict["indist_attack_xent"]
+        config_dict["indist_attack_clf"] = AttackConfig(
+            **config_dict["indist_attack_clf"]
         )
 
     return TrainConfig(**config_dict)
