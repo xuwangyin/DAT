@@ -273,29 +273,13 @@ def train(cfg: TrainConfig):
             device=cfg.device,
         )
 
-    criterion = nn.BCEWithLogitsLoss(reduction="mean")
+    criterion_ebm = nn.BCEWithLogitsLoss(reduction="mean")
     criterion_clf = nn.CrossEntropyLoss(reduction="mean")
     optimizer = rebm.training.modeling.get_optimizer(
         model=model,
         optimizer_name=cfg.optimizer,
         lr=cfg.lr,
         wd=cfg.wd,
-    )
-
-    get_metrics_shared_kwargs = dict(
-        model=model,
-        cfg=cfg,
-        criterion=criterion,
-    )
-
-    get_metrics_shared_kwargs_clf = dict(
-        model=model,
-        cfg=cfg,
-        criterion=criterion_clf,
-    )
-
-    LOGGER.info(
-        f"indist dataset classes: {train_indist_loader.dataset.classes}"
     )
 
     indist_epoch = 0
@@ -384,34 +368,39 @@ def train(cfg: TrainConfig):
                     global_step_one_indexed,
                 )
 
-            train_outdist_imgs = next(train_outdist_iter)[0].to(cfg.device)
-            train_indist_imgs = train_indist_batch[0].to(cfg.device)
-            train_indist_labels = train_indist_batch[1]
-
-            optimizer.zero_grad()
-
-            ebm_metrics = compute_ebm_metrics(
-                indist_imgs=train_indist_imgs,
-                indist_labels=train_indist_labels,
-                outdist_imgs=train_outdist_imgs,
-                outdist_step=cur_outdist_steps,
-                **get_metrics_shared_kwargs,
-            )
+            outdist_imgs = next(train_outdist_iter)[0].to(cfg.device)
+            indist_imgs_ebm = train_indist_batch[0].to(cfg.device)
+            indist_labels_ebm = train_indist_batch[1]
 
             indist_imgs_clf, indist_labels_clf = next(train_indist_iter_clf)
             indist_imgs_clf = indist_imgs_clf.to(cfg.device)
             indist_labels_clf = indist_labels_clf.to(cfg.device)
 
+            optimizer.zero_grad()
+
+            ebm_metrics = compute_ebm_metrics(
+                indist_imgs=indist_imgs_ebm,
+                indist_labels=indist_labels_ebm,
+                outdist_imgs=outdist_imgs,
+                outdist_step=cur_outdist_steps,
+                model=model,
+                cfg=cfg,
+                criterion=criterion_ebm,
+            )
+
             clf_loss = compute_clf_adv_loss(
                 indist_imgs=indist_imgs_clf,
                 indist_labels=indist_labels_clf,
-                **get_metrics_shared_kwargs_clf,
+                model=model,
+                cfg=cfg,
+                criterion=criterion_clf,
             )
 
             # Backpropagate combined loss and update weights
             total_loss = ebm_metrics.loss + clf_loss
             total_loss.backward()
             optimizer.step()
+
             train_adv_auc_deque.append(ebm_metrics.adv_auc)
             train_clean_auc_deque.append(ebm_metrics.clean_auc)
 
@@ -479,8 +468,6 @@ def train(cfg: TrainConfig):
 
 
 if __name__ == "__main__":
-    import sys
-
     args = sys.argv[1:]
 
     if not args or "-h" in args or "--help" in args:
