@@ -1,6 +1,6 @@
 # Model Configuration for CIFAR-100 dual-AT WideResNet34x10 model
 
-method: "dual-at"
+method: "dat"
 dataset: cifar100
 checkpoint: wandb/robust-ebms-2/wandb/run-20250912_232324-he2g1mwx/files/model_bestfid.pth
 model_type: WideResNet34x10

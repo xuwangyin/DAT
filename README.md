@@ -1,4 +1,4 @@
-# Dual-AT
+# DAT
 
 ## Setup Environment
 
@@ -23,18 +23,18 @@ Model configuration files are located in `model_configs/` and specify the model 
 |--------|-------------------|
 | CIFAR-10 standard AT | `cifar10-at-WideResNet34x10.yaml` |
 | CIFAR-10 RATIO | `cifar10-ratio-WideResNet34x10.yaml` |
-| CIFAR-10 Dual-AT (T=40) | `cifar10-dual-at-WideResNet34x10-T40-seed0.yaml` |
-| CIFAR-10 Dual-AT (T=50) | `cifar10-dual-at-WideResNet34x10-T50.yaml` |
+| CIFAR-10 DAT (T=40) | `cifar10-dat-WideResNet34x10-T40-seed0.yaml` |
+| CIFAR-10 DAT (T=50) | `cifar10-dat-WideResNet34x10-T50.yaml` |
 | CIFAR-100 standard AT | `cifar100-at-WideResNet34x10.yaml` |
 | CIFAR-100 RATIO | `cifar100-ratio-WideResNet34x10.yaml` |
-| CIFAR-100 Dual-AT (T=45) | `cifar100-dual-at-WideResNet34x10-T45-seed0.yaml` |
-| CIFAR-100 Dual-AT (T=50) | `cifar100-dual-at-WideResNet34x10-T50.yaml` |
+| CIFAR-100 DAT (T=45) | `cifar100-dat-WideResNet34x10-T45-seed0.yaml` |
+| CIFAR-100 DAT (T=50) | `cifar100-dat-WideResNet34x10-T50.yaml` |
 | ImageNet standard AT ResNet50 | `imagenet-at-ResNet50ImageNet.yaml` |
 | ImageNet standard AT WideResNet50x4 | `imagenet-at-WideResNet50x4ImageNet.yaml` |
-| ImageNet Dual-AT ResNet50 (T=15) | `imagenet-dual-at-ResNet50ImageNet-T15-300K-seed0.yaml` |
-| ImageNet Dual-AT ResNet50 (T=30) | `imagenet-dual-at-ResNet50ImageNet-T30.yaml` |
-| ImageNet Dual-AT WideResNet50x4 (T=30) | `imagenet-dual-at-WideResNet50x4ImageNet-T30.yaml` |
-| ImageNet Dual-AT WideResNet50x4 (T=65) | `imagenet-dual-at-WideResNet50x4ImageNet-T65.yaml` |
+| ImageNet DAT ResNet50 (T=15) | `imagenet-dat-ResNet50ImageNet-T15-300K-seed0.yaml` |
+| ImageNet DAT ResNet50 (T=30) | `imagenet-dat-ResNet50ImageNet-T30.yaml` |
+| ImageNet DAT WideResNet50x4 (T=30) | `imagenet-dat-WideResNet50x4ImageNet-T30.yaml` |
+| ImageNet DAT WideResNet50x4 (T=65) | `imagenet-dat-WideResNet50x4ImageNet-T65.yaml` |
 
 ## Model Training
 
@@ -46,7 +46,7 @@ python train.py $config_file
 
 For example:
 ```bash
-python train.py model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
+python train.py model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
 ```
 
 ## Model Evaluation
@@ -55,13 +55,13 @@ python train.py model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
   ```bash
   python eval_acc.py $config_file
   ```
-  Example: `python eval_acc.py model_configs/cifar10-dual-at-WideResNet34x10-T50.yaml`
+  Example: `python eval_acc.py model_configs/cifar10-dat-WideResNet34x10-T50.yaml`
 
 - **Fréchet Inception Distance (FID)**: Evaluate the quality of generated images using FID:
   ```bash
   python run_fid_eval.py $config_file
   ```
-  Example: `python run_fid_eval.py model_configs/cifar10-dual-at-WideResNet34x10-T50.yaml`
+  Example: `python run_fid_eval.py model_configs/cifar10-dat-WideResNet34x10-T50.yaml`
 
 - **Expected Calibration Error (ECE)**: Evaluate the calibration quality of model predictions:
   ```bash

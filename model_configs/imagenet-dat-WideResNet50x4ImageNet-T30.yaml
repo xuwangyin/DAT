@@ -1,6 +1,6 @@
 # Model Configuration for ImageNet dual-AT WideResNet50x4 model
 
-method: "dual-at"
+method: "dat"
 dataset: imagenet
 checkpoint: wandb/robust-ebms-2/wandb/run-20250916_135605-1w52o8or/files/model_bestfid.pth
 model_type: WideResNet50x4ImageNet

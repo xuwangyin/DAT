@@ -1,4 +1,4 @@
-method: "dual-at"
+method: "dat"
 dataset: "imagenet"
 checkpoint: wandb/robust-ebms-2/wandb/run-20250918_061346-u5ju8b17/files/model_bestfid.pth
 model_type: "ResNet50ImageNet"
