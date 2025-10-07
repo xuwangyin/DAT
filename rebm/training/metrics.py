@@ -341,8 +341,6 @@ def compute_training_metrics_clf(
     criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     model: nn.Module,
     cfg: "TrainConfig",
-    indist_samples_extra: torch.Tensor = None,
-    indist_labels_extra: torch.Tensor = None,
 ) -> torch.Tensor:
     """Compute classification loss on adversarial in-distribution examples."""
     assert (
@@ -361,13 +359,8 @@ def compute_training_metrics_clf(
     )
     indist_adv_logits = model(indist_adv_imgs)
 
-    # Base loss from adversarial samples
+    # Compute loss from adversarial samples
     loss = criterion(indist_adv_logits, indist_labels)
-
-    if indist_samples_extra is not None and indist_labels_extra is not None:
-        indist_clean_logits = model(indist_samples_extra)
-        loss_clean = criterion(indist_clean_logits, indist_labels_extra)
-        loss = loss + loss_clean * 0.1
 
     return loss
 

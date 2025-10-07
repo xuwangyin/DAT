@@ -194,10 +194,6 @@ class TrainConfig:
             raise ValueError(
                 "fixed_lr must be True. Dynamic learning rate schedules are not supported."
             )
-        if self.indist_train_only and self.indist_clean_extra:
-            raise ValueError(
-                "indist_clean_extra cannot be True when indist_train_only is True"
-            )
 
     @property
     def device(self) -> torch.device:

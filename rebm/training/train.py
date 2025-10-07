@@ -206,15 +206,13 @@ def evaluate_and_log_accuracy(
 
     if cfg.robust_eval:
         LOGGER.info("Evaluating robust accuracy...")
-        attack_kwargs = None
-        if cfg.indist_attack_clf is not None:
-            attack_kwargs = {
-                "norm": "L2",
-                "eps": cfg.indist_attack_clf.eps,
-                "step_size": cfg.indist_attack_clf.step_size,
-                "steps": cfg.indist_attack_clf.max_steps,
-                "random_start": False,
-            }
+        attack_kwargs = {
+            "norm": "L2",
+            "eps": cfg.indist_attack_clf.eps,
+            "step_size": cfg.indist_attack_clf.step_size,
+            "steps": cfg.indist_attack_clf.max_steps,
+            "random_start": False,
+        }
 
         metrics_dict["robust_test_acc"] = eval_robust_acc(
             model=model_to_eval,
@@ -364,7 +362,7 @@ def train(cfg: TrainConfig):
                     step=global_step_one_indexed,
                 )
 
-            if is_evaluation_step and not cfg.indist_train_only:
+            if is_evaluation_step:
                 model.zero_grad()
                 model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
                 evaluate_and_log_fid(
@@ -386,51 +384,11 @@ def train(cfg: TrainConfig):
                     global_step_one_indexed,
                 )
 
-            train_outdist_imgs = (
-                None
-                if cfg.indist_train_only
-                else next(train_outdist_iter)[0].to(cfg.device)
-            )
+            train_outdist_imgs = next(train_outdist_iter)[0].to(cfg.device)
             train_indist_imgs = train_indist_batch[0].to(cfg.device)
             train_indist_labels = train_indist_batch[1]
 
             optimizer.zero_grad()
-            if cfg.indist_train_only:
-                model.train()
-                train_indist_imgs_clf, train_indist_labels_clf = next(
-                    train_indist_iter_clf
-                )
-                train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
-                train_indist_labels_clf = train_indist_labels_clf.to(
-                    cfg.device
-                )
-                clf_loss = compute_training_metrics_clf(
-                    indist_imgs=train_indist_imgs_clf,
-                    indist_labels=train_indist_labels_clf,
-                    **get_metrics_shared_kwargs_clf,
-                )
-                clf_loss.backward()
-                optimizer.step()
-
-                if cfg.use_ema:
-                    with torch.no_grad():
-                        ema_model.update_parameters(model.module)
-
-
-                if global_step_one_indexed % 20 == 0:
-                    LOGGER.info(
-                        f"Step {global_step_one_indexed:04d} - "
-                        f"clf_loss: {clf_loss.item():.5f}"
-                    )
-                if is_image_logging_step:
-                    log_image_grid(
-                        "train_indist_imgs_clf",
-                        train_indist_imgs_clf,
-                        cfg,
-                        n_imgs_seen
-                    )
-                continue
-
             train_metrics = compute_training_metrics(
                 indist_imgs=train_indist_imgs,
                 indist_labels=train_indist_labels,
@@ -438,31 +396,19 @@ def train(cfg: TrainConfig):
                 outdist_step=cur_outdist_steps,
                 **get_metrics_shared_kwargs,
             )
-            if cfg.indist_attack_clf is not None:
-                train_indist_imgs_clf, train_indist_labels_clf = next(
-                    train_indist_iter_clf
-                )
-                train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
-                train_indist_labels_clf = train_indist_labels_clf.to(
-                    cfg.device
-                )
+            train_indist_imgs_clf, train_indist_labels_clf = next(
+                train_indist_iter_clf
+            )
+            train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
+            train_indist_labels_clf = train_indist_labels_clf.to(
+                cfg.device
+            )
 
-                indist_samples_extra = None
-                indist_labels_extra = None
-                if cfg.indist_clean_extra:
-                    indist_batch_extra = next(train_indist_iter_clf)
-                    indist_samples_extra = indist_batch_extra[0].to(cfg.device)
-                    indist_labels_extra = indist_batch_extra[1].to(cfg.device)
-
-                clf_loss = compute_training_metrics_clf(
-                    indist_imgs=train_indist_imgs_clf,
-                    indist_labels=train_indist_labels_clf,
-                    indist_samples_extra=indist_samples_extra,
-                    indist_labels_extra=indist_labels_extra,
-                    **get_metrics_shared_kwargs_clf,
-                )
-            else:
-                clf_loss = 0.0
+            clf_loss = compute_training_metrics_clf(
+                indist_imgs=train_indist_imgs_clf,
+                indist_labels=train_indist_labels_clf,
+                **get_metrics_shared_kwargs_clf,
+            )
             train_adv_auc_deque.append(train_metrics.adv_auc)
             train_clean_auc_deque.append(train_metrics.clean_auc)
             (train_metrics.loss * cfg.bce_weight + clf_loss * cfg.clf_lr_multiplier).backward()
