@@ -17,7 +17,7 @@ micromamba env create -f packages.yaml
 
 ## Model Configuration Files
 
-The following table outlines the configuration files in `model_configs/` and their purposes:
+Model configuration files are located in `model_configs/` and specify the model architecture, training hyperparameters, and checkpoint paths for evaluation:
 
 | Method | Configuration File |
 |--------|-------------------|
@@ -59,9 +59,9 @@ python train.py model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
 
 - **Fréchet Inception Distance (FID)**: Evaluate the quality of generated images using FID:
   ```bash
-  python eval_fid.py $config_file
+  python run_fid_eval.py $config_file
   ```
-  Example: `python eval_fid.py model_configs/cifar10-dual-at-WideResNet34x10-T50.yaml`
+  Example: `python run_fid_eval.py model_configs/cifar10-dual-at-WideResNet34x10-T50.yaml`
 
 - **Expected Calibration Error (ECE)**: Evaluate the calibration quality of model predictions:
   ```bash
@@ -70,9 +70,9 @@ python train.py model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
 
 - **Out-of-Distribution (OOD) Detection**: Evaluate how well models detect out-of-distribution inputs:
   ```bash
-  python eval_ood_detection.py $config_file --ood-dataset $ood_dataset
+  python run_ood_eval.py $config_file --ood-dataset $ood_dataset
   ```
-  Example: `python eval_ood_detection.py model_configs/cifar100-at-WideResNet34x10.yaml --ood-dataset noise`
+  Example: `python run_ood_eval.py model_configs/cifar100-at-WideResNet34x10.yaml --ood-dataset noise`
 
 ## Related Work
 

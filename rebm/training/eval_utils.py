@@ -971,7 +971,7 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
     # Process in-distribution samples
     LOGGER.info("Processing in-distribution samples...")
     with torch.no_grad():
-        for batch in tqdm(indist_loader, desc="In-distribution"):
+        for batch in tqdm(indist_loader, desc="In-distribution", disable=None):
             indist_imgs = batch[0].to(cfg.device)
             # Compute log-sum-exp of logits for in-distribution samples
             logits = model(x=indist_imgs, y=None)
@@ -987,8 +987,8 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
     # Process out-of-distribution samples (limited to MAX_OOD_SAMPLES)
     LOGGER.info(f"Processing out-of-distribution samples (max {MAX_OOD_SAMPLES} samples)...")
     ood_samples_processed = 0
-    
-    for batch in tqdm(outdist_loader, desc="Out-of-distribution"):
+
+    for batch in tqdm(outdist_loader, desc="Out-of-distribution", disable=None):
         if ood_samples_processed >= MAX_OOD_SAMPLES:
             break
             

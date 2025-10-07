@@ -52,7 +52,7 @@ r1reg: 0  # Weight for R1 regularization
 # indist_eps: .inf  # Perturbation limit for in-distribution adversarial attack
 # indist_aug: false  # Perform data augmentation on in-distribution data
 # pretrain: false  # Use pretrained model for the D model
-batch_size: 500
+batch_size: 1000
 # epochs_per_step: 5  # number of training epochs for each step
 AUC_th: 0.8  # When the AUC reaches the threshold, interrupt the training
 # fid_log_interval: 500  # Log fid every 500 iterations
@@ -90,4 +90,3 @@ wandb_dir: "wandb/robust-ebms-2"
 use_ema: false
 logsumexp: true
 indist_train_only: false
-eval_only: true

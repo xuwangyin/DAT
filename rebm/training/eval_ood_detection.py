@@ -6,6 +6,8 @@ import sys
 import logging
 from typing import Tuple
 
+import numpy as np
+import torch
 import InNOutRobustness.utils.datasets as dl
 from rebm.training import data as training_data
 from rebm.training.config_classes import (
@@ -20,6 +22,10 @@ LOGGER = logging.getLogger(__name__)
 
 def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
     """Run OOD detection evaluation and return clean/adv AUROC."""
+    # Set random seed for reproducibility
+    np.random.seed(cfg.rand_seed)
+    torch.manual_seed(cfg.rand_seed)
+
     LOGGER.info("OOD detection evaluation requested. Initializing model...")
     model = get_model(
         model_config=cfg.model,
@@ -32,7 +38,7 @@ def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
     indist_loader = training_data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
-        split="test",
+        split="val",
         shuffle=False,
         augm_type="none",
         balanced=True,

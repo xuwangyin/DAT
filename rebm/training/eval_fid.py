@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import sys
 
@@ -21,7 +22,13 @@ def run_fid_evaluation(cfg: TrainConfig) -> float:
     Returns:
         FID score
     """
-    LOGGER.info("FID evaluation requested. Initializing model...")
+    LOGGER.info("FID evaluation image_log config:")
+    for field in dataclasses.fields(cfg.image_log):
+        value = getattr(cfg.image_log, field.name)
+        LOGGER.info(f"  {field.name}: {value}")
+    LOGGER.info(f"Batch size: {cfg.batch_size}")
+    LOGGER.info(f"Logsumexp sampling (unconditional): {cfg.logsumexp_sampling}")
+    LOGGER.info("Initializing model...")
     model = get_model(
         model_config=cfg.model,
         device=cfg.device,
