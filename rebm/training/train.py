@@ -43,12 +43,12 @@ LOGGER = logging.getLogger(__name__)
 @dataclasses.dataclass
 class Dataloaders:
     """Container for all dataloaders used during training."""
-    train_indist_loader: torch.utils.data.DataLoader
-    train_indist_loader_clf: torch.utils.data.DataLoader
-    train_indist_iter: Iterable
-    train_indist_iter_clf: Iterable
-    train_outdist_iter: Iterable
-    test_loader_for_eval: torch.utils.data.DataLoader
+    indist_loader_ebm: torch.utils.data.DataLoader
+    indist_loader_clf: torch.utils.data.DataLoader
+    indist_iter_ebm: Iterable
+    indist_iter_clf: Iterable
+    outdist_iter: Iterable
+    test_loader: torch.utils.data.DataLoader
 
 
 def infinite_iter(iterable: Iterable):
@@ -66,12 +66,12 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
 
     Returns:
         Dataloaders instance containing:
-            - train_indist_loader: Loader for in-distribution training (generation augmentation)
-            - train_indist_loader_clf: Loader for in-distribution training (classification augmentation)
-            - train_indist_iter: Infinite iterator for train_indist_loader
-            - train_indist_iter_clf: Infinite iterator for train_indist_loader_clf
-            - train_outdist_iter: Infinite iterator for out-distribution data
-            - test_loader_for_eval: Loader for test set evaluation
+            - indist_loader_ebm: Loader for in-distribution training (generation augmentation)
+            - indist_loader_clf: Loader for in-distribution training (classification augmentation)
+            - indist_iter_ebm: Infinite iterator for indist_loader_ebm
+            - indist_iter_clf: Infinite iterator for indist_loader_clf
+            - outdist_iter: Infinite iterator for out-distribution data
+            - test_loader: Loader for test set evaluation
     """
     train_indist_loader = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
@@ -103,12 +103,12 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
     )
 
     return Dataloaders(
-        train_indist_loader=train_indist_loader,
-        train_indist_loader_clf=train_indist_loader_clf,
-        train_indist_iter=infinite_iter(train_indist_loader),
-        train_indist_iter_clf=infinite_iter(train_indist_loader_clf),
-        train_outdist_iter=train_outdist_iter,
-        test_loader_for_eval=test_loader_for_eval,
+        indist_loader_ebm=train_indist_loader,
+        indist_loader_clf=train_indist_loader_clf,
+        indist_iter_ebm=infinite_iter(train_indist_loader),
+        indist_iter_clf=infinite_iter(train_indist_loader_clf),
+        outdist_iter=train_outdist_iter,
+        test_loader=test_loader_for_eval,
     )
 
 
@@ -180,17 +180,8 @@ def evaluate_and_log_accuracy(
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
-    metrics_dict = {
-        "train_acc": None,
-        "test_acc": None,
-        "train_acc_calib": None,
-        "test_acc_calib": None,
-        "robust_train_acc": None,
-        "robust_test_acc": None,
-    }
-
     LOGGER.info("Evaluating standard accuracy...")
-    metrics_dict["test_acc"] = eval_acc(
+    test_acc = eval_acc(
         model=model_to_eval,
         dataloader=test_loader_for_eval,
         device=cfg.device,
@@ -200,10 +191,9 @@ def evaluate_and_log_accuracy(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    LOGGER.info(
-        f"Standard Acc - Train: {metrics_dict['train_acc']}, Test: {metrics_dict['test_acc']:.4f}"
-    )
+    LOGGER.info(f"Test Acc: {test_acc:.4f}")
 
+    robust_test_acc = None
     if cfg.robust_eval:
         LOGGER.info("Evaluating robust accuracy...")
         attack_kwargs = {
@@ -214,7 +204,7 @@ def evaluate_and_log_accuracy(
             "random_start": False,
         }
 
-        metrics_dict["robust_test_acc"] = eval_robust_acc(
+        robust_test_acc = eval_robust_acc(
             model=model_to_eval,
             dataloader=test_loader_for_eval,
             device=cfg.device,
@@ -226,11 +216,12 @@ def evaluate_and_log_accuracy(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        LOGGER.info(
-            f"Robust Acc - Train: {metrics_dict['robust_train_acc']}, Test: {metrics_dict['robust_test_acc']:.4f}"
-        )
+        LOGGER.info(f"Robust Test Acc: {robust_test_acc:.4f}")
 
-    is_new_best_acc = classification_metrics.update(**metrics_dict)
+    is_new_best_acc = classification_metrics.update(
+        test_acc=test_acc,
+        robust_test_acc=robust_test_acc,
+    )
     if is_new_best_acc:
         model_to_save = model_to_eval.module.module if cfg.use_ema else model_to_eval.module
         rebm.training.modeling.save_best_accuracy_model(model_to_save)
@@ -251,12 +242,12 @@ def train(cfg: TrainConfig):
 
     # Create all dataloaders
     dataloaders = create_dataloaders(cfg)
-    train_indist_loader = dataloaders.train_indist_loader
-    train_indist_loader_clf = dataloaders.train_indist_loader_clf
-    train_indist_iter = dataloaders.train_indist_iter
-    train_indist_iter_clf = dataloaders.train_indist_iter_clf
-    train_outdist_iter = dataloaders.train_outdist_iter
-    test_loader_for_eval = dataloaders.test_loader_for_eval
+    indist_loader_ebm = dataloaders.indist_loader_ebm
+    indist_loader_clf = dataloaders.indist_loader_clf
+    indist_iter_ebm = dataloaders.indist_iter_ebm
+    indist_iter_clf = dataloaders.indist_iter_clf
+    outdist_iter = dataloaders.outdist_iter
+    test_loader = dataloaders.test_loader
 
     model = rebm.training.modeling.get_model(
         model_config=cfg.model,
@@ -293,8 +284,8 @@ def train(cfg: TrainConfig):
         train_clean_auc_deque = collections.deque(
             maxlen=math.ceil(cfg.min_imgs_per_threshold / cfg.batch_size)
         )
-        for local_step, train_indist_batch in enumerate(train_indist_iter):
-            indist_epoch = global_step_one_indexed // len(train_indist_loader)
+        for local_step, train_indist_batch in enumerate(indist_iter_ebm):
+            indist_epoch = global_step_one_indexed // len(indist_loader_ebm)
             global_step_one_indexed += 1
             n_imgs_seen = global_step_one_indexed * cfg.batch_size
 
@@ -363,16 +354,16 @@ def train(cfg: TrainConfig):
                 evaluate_and_log_accuracy(
                     model_to_eval,
                     cfg,
-                    test_loader_for_eval,
+                    test_loader,
                     classification_metrics,
                     global_step_one_indexed,
                 )
 
-            outdist_imgs = next(train_outdist_iter)[0].to(cfg.device)
+            outdist_imgs = next(outdist_iter)[0].to(cfg.device)
             indist_imgs_ebm = train_indist_batch[0].to(cfg.device)
             indist_labels_ebm = train_indist_batch[1]
 
-            indist_imgs_clf, indist_labels_clf = next(train_indist_iter_clf)
+            indist_imgs_clf, indist_labels_clf = next(indist_iter_clf)
             indist_imgs_clf = indist_imgs_clf.to(cfg.device)
             indist_labels_clf = indist_labels_clf.to(cfg.device)
 
