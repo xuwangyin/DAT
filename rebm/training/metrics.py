@@ -11,7 +11,6 @@ import rebm.training.misc
 from rebm.training.adv_attacks import pgd_attack, pgd_attack_xent
 from rebm.training.eval_utils import (
     compute_img_diff,
-    generate_indist_adv_images,
     generate_outdist_adv_images,
     get_auc,
 )
@@ -22,46 +21,37 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass
-class Metrics:
+class TrainingMetrics:
+    # AUC metrics
     clean_auc: float
     adv_auc: float
-    indist_adv_auc: float | None = None
-    indist_clean_auc: float | None = None
 
-    def to_simple_dict(self) -> dict[str, float]:
-        ret_dict = dict()
-        for field in dataclasses.fields(self):
-            key = field.name
-            val = getattr(self, key)
-            if val is None:
-                continue
-
-            if torch.is_tensor(val):
-                if val.numel() == 1:
-                    ret_dict[key] = val.item()
-                continue
-
-            ret_dict[key] = val
-
-        return ret_dict
-
-
-@dataclasses.dataclass
-class TrainingMetrics(Metrics):
+    # Loss metrics
     clf_loss: torch.Tensor | None = None
     loss: torch.Tensor | None = None
     r1: torch.Tensor | None = None
 
+    # Image tensors
     indist_imgs: torch.Tensor | None = None
     outdist_imgs_clean: torch.Tensor | None = None
     adv_imgs: torch.Tensor | None = None
     outdist_imgs_error: torch.Tensor | None = None
 
+    # Classifier logits
     clf_indist: torch.Tensor | None = None
     clf_outdist: torch.Tensor | None = None
     clf_adv: torch.Tensor | None = None
 
+    # Distance metrics
     l2_dist_relative: float | None = None
+
+    def to_simple_dict(self) -> dict[str, float]:
+        return {
+            field.name: (val.item() if torch.is_tensor(val) else val)
+            for field in dataclasses.fields(self)
+            if (val := getattr(self, field.name)) is not None
+            and not (torch.is_tensor(val) and val.numel() > 1)
+        }
 
 
 @dataclasses.dataclass
@@ -87,57 +77,26 @@ class ImageGenerationMetrics:
 
 @dataclasses.dataclass
 class ClassificationMetrics:
-    """Class to track classification metrics including training and test accuracy before and after calibration."""
+    """Class to track classification metrics."""
 
-    # Standard (pre-calibration) metrics
-    train_acc: float | None = None
     test_acc: float | None = None
-
-    # Post-calibration metrics
-    train_acc_calib: float | None = None
-    test_acc_calib: float | None = None
-
-    # Robust accuracy metrics
-    robust_train_acc: float | None = None
     robust_test_acc: float | None = None
-
-    # Best metrics tracking
-    best_train_acc: float | None = None
-    best_test_acc: float | None = None
-    best_test_acc_calib: float | None = None
     best_robust_test_acc: float | None = None
 
     def update(
         self,
         *,  # Force keyword arguments
-        train_acc: float,
         test_acc: float,
-        train_acc_calib: float | None = None,
-        test_acc_calib: float | None = None,
-        robust_train_acc: float | None = None,
         robust_test_acc: float | None = None,
     ) -> bool:
-        # Update standard (pre-calibration) metrics
-        self.train_acc = train_acc
         self.test_acc = test_acc
 
-        # Update post-calibration metrics
-        self.train_acc_calib = train_acc_calib
-        self.test_acc_calib = test_acc_calib
-
         # Update robust accuracy metrics
-        if robust_train_acc is not None:
-            self.robust_train_acc = robust_train_acc
         if robust_test_acc is not None:
             self.robust_test_acc = robust_test_acc
 
-        # Update best standard accuracy
-        new_best = False
-        # if self.best_test_acc is None or test_acc > self.best_test_acc:
-        #     self.best_test_acc = test_acc
-        #     new_best = True
-
         # Check if we have a new best robust test accuracy
+        new_best = False
         if robust_test_acc is not None and (
             self.best_robust_test_acc is None
             or robust_test_acc > self.best_robust_test_acc
@@ -145,77 +104,43 @@ class ClassificationMetrics:
             self.best_robust_test_acc = robust_test_acc
             new_best = True
 
-        # Check if we have a new best calibrated test accuracy
-        if test_acc_calib is not None and (
-            self.best_test_acc_calib is None
-            or test_acc_calib > self.best_test_acc_calib
-        ):
-            self.best_test_acc_calib = test_acc_calib
-
         return new_best
 
 
-def compute_metrics(
+def compute_auc_metrics(
     model,
     indist_imgs,
     indist_labels,
     adv_imgs,
     outdist_imgs,
     attack_labels,
-    indist_adv_imgs=None,
-    indist_attack_labels=None,
-):
-    """Compute AUC metrics with no gradient tracking."""
+) -> tuple[float, float]:
+    """Compute AUC metrics with no gradient tracking.
+
+    Returns:
+        tuple[float, float]: (adv_auc, clean_auc)
+    """
     assert_no_grad(model)
     assert not model.training
 
     with torch.no_grad():
-        # Compute logits for mandatory inputs
         inputs = torch.cat([indist_imgs, adv_imgs, outdist_imgs])
         labels = torch.cat([indist_labels, attack_labels, attack_labels])
 
         batch_logits = model(inputs, labels)
         indist_logits, adv_logits, outdist_logits = torch.chunk(batch_logits, 3)
 
-        # Compute basic AUC metrics
-        auc_metrics = {
-            "adv_auc": get_auc(
-                pos=indist_logits.cpu().numpy(), neg=adv_logits.cpu().numpy()
-            ),
-            "clean_auc": get_auc(
-                pos=indist_logits.cpu().numpy(),
-                neg=outdist_logits.cpu().numpy(),
-            ),
-        }
-
-        # Compute optional in-distribution adversarial metrics if provided
-        if indist_adv_imgs is not None and indist_attack_labels is not None:
-            # Process additional inputs separately for clarity
-            inputs = torch.cat([indist_adv_imgs, indist_imgs])
-            labels = torch.cat([indist_attack_labels, indist_attack_labels])
-
-            batch_logits = model(inputs, labels)
-            indist_adv_logits, indist_abstain_logits = torch.chunk(
-                batch_logits, 2
-            )
-
-            # Add in-distribution adversarial AUC metrics
-            auc_metrics.update(
-                {
-                    "indist_adv_auc": get_auc(
-                        pos=indist_logits.cpu().numpy(),
-                        neg=indist_adv_logits.cpu().numpy(),
-                    ),
-                    "indist_clean_auc": get_auc(
-                        pos=indist_logits.cpu().numpy(),
-                        neg=indist_abstain_logits.cpu().numpy(),
-                    ),
-                }
-            )
+        adv_auc = get_auc(
+            pos=indist_logits.cpu().numpy(), neg=adv_logits.cpu().numpy()
+        )
+        clean_auc = get_auc(
+            pos=indist_logits.cpu().numpy(),
+            neg=outdist_logits.cpu().numpy(),
+        )
 
     # Ensure no gradients were accumulated
     assert_no_grad(model)
-    return Metrics(**auc_metrics)
+    return adv_auc, clean_auc
 
 
 def compute_ebm_metrics(
@@ -233,12 +158,6 @@ def compute_ebm_metrics(
     adv_imgs, attack_labels = generate_outdist_adv_images(
         model, outdist_imgs, cfg, outdist_step, indist_labels=indist_labels
     )
-
-    indist_adv_imgs, indist_attack_labels = None, None
-    if cfg.indist_attack is not None:
-        indist_adv_imgs, indist_attack_labels = generate_indist_adv_images(
-            model, indist_imgs, indist_labels, cfg
-        )
 
     if cfg.indist_perturb:
         indist_imgs = pgd_attack(
@@ -265,15 +184,13 @@ def compute_ebm_metrics(
         else l2_dist / (outdist_step * cfg.attack.step_size)
     )
 
-    metrics = compute_metrics(
+    adv_auc, clean_auc = compute_auc_metrics(
         model,
         indist_imgs,
         indist_labels,
         adv_imgs,
         outdist_imgs,
         attack_labels,
-        indist_adv_imgs,
-        indist_attack_labels,
     )
 
     indist_target = torch.ones(indist_imgs.shape[0]).to(indist_imgs.device)
@@ -294,27 +211,13 @@ def compute_ebm_metrics(
         else:
             indist_logits = model(x=indist_imgs, y=indist_labels)
 
-    if cfg.indist_attack is not None and cfg.indist_attack_only:
-        # Only use in-distribution adversarial examples
-        indist_adv_logits = model(indist_adv_imgs, indist_attack_labels)
-        logits = torch.cat([indist_logits, indist_adv_logits])
-        targets = torch.cat([indist_target, adv_target])
-    elif cfg.indist_attack is not None:
-        # Use both in-distribution and out-of-distribution adversarial examples
-        adv_input = torch.cat([adv_imgs, indist_adv_imgs])
-        adv_labels = torch.cat([attack_labels, indist_attack_labels])
-        adv_output = model(adv_input, adv_labels)
-        adv_logits, indist_adv_logits = torch.chunk(adv_output, 2)
-        logits = torch.cat([indist_logits, adv_logits, indist_adv_logits])
-        targets = torch.cat([indist_target, adv_target, adv_target])
+    # Use out-of-distribution adversarial examples
+    if cfg.logsumexp:
+        adv_logits = torch.logsumexp(model(adv_imgs, y=None), dim=1)
     else:
-        # Only use out-of-distribution adversarial examples
-        if cfg.logsumexp:
-            adv_logits = torch.logsumexp(model(adv_imgs, y=None), dim=1)
-        else:
-            adv_logits = model(adv_imgs, attack_labels)
-        logits = torch.cat([indist_logits, adv_logits])
-        targets = torch.cat([indist_target, adv_target])
+        adv_logits = model(adv_imgs, attack_labels)
+    logits = torch.cat([indist_logits, adv_logits])
+    targets = torch.cat([indist_target, adv_target])
 
     clf_loss = criterion(logits, targets)
     loss = clf_loss + cfg.r1reg * r1
@@ -328,7 +231,8 @@ def compute_ebm_metrics(
         outdist_imgs_clean=outdist_imgs,
         adv_imgs=adv_imgs.detach(),
         outdist_imgs_error=compute_img_diff(adv_imgs, outdist_imgs).detach(),
-        **metrics.to_simple_dict(),
+        adv_auc=adv_auc,
+        clean_auc=clean_auc,
     )
 
     return TrainingMetrics(**ret_metrics_dict)
@@ -363,39 +267,3 @@ def compute_clf_adv_loss(
     loss = criterion(indist_adv_logits, indist_labels)
 
     return loss
-
-
-def compute_testing_metrics(
-    *,
-    indist_imgs: torch.Tensor,
-    indist_labels: torch.Tensor,
-    outdist_imgs: torch.Tensor,
-    outdist_step: int,
-    criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
-    model: nn.Module,
-    cfg: "TrainConfig",
-) -> Metrics:
-    """Compute metrics during testing/evaluation."""
-    assert not model.training
-    assert indist_labels.dtype == torch.long
-
-    adv_imgs, attack_labels = generate_outdist_adv_images(
-        model, outdist_imgs, cfg, outdist_step, indist_labels=indist_labels
-    )
-
-    indist_adv_imgs, indist_attack_labels = None, None
-    if cfg.indist_attack is not None:
-        indist_adv_imgs, indist_attack_labels = generate_indist_adv_images(
-            model, indist_imgs, indist_labels, cfg
-        )
-
-    return compute_metrics(
-        model,
-        indist_imgs,
-        indist_labels,
-        adv_imgs,
-        outdist_imgs,
-        attack_labels,
-        indist_adv_imgs,
-        indist_attack_labels,
-    )

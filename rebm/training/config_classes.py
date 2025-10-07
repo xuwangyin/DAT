@@ -148,9 +148,7 @@ class TrainConfig:
     tags: Tuple[str, ...]
 
     # Optional parameters
-    indist_attack: AttackConfig | None = None
-    indist_attack_only: bool = False
-    indist_attack_clf: AttackConfig | None = None
+    indist_attack_clf: AttackConfig
     indist_clean_extra: bool = False
     fp16: bool = False
     samples_per_attack_step: int | None = None
@@ -216,15 +214,6 @@ def load_train_config(
     config_dict["attack"] = AttackConfig(**config_dict.get("attack", {}))
     config_dict["model"] = create_model_config(config_dict.get("model", {}))
     config_dict["image_log"] = ImageLogConfig(**config_dict.get("image_log", {}))
-
-    if "indist_attack" in config_dict and config_dict["indist_attack"] is not None:
-        config_dict["indist_attack"] = AttackConfig(**config_dict["indist_attack"])
-    if (
-        "indist_attack_clf" in config_dict
-        and config_dict["indist_attack_clf"] is not None
-    ):
-        config_dict["indist_attack_clf"] = AttackConfig(
-            **config_dict["indist_attack_clf"]
-        )
+    config_dict["indist_attack_clf"] = AttackConfig(**config_dict["indist_attack_clf"])
 
     return TrainConfig(**config_dict)
