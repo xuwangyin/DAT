@@ -30,7 +30,7 @@ from rebm.training.metrics import (
     compute_training_metrics,
     compute_training_metrics_clf,
 )
-from rebm.training.scheduling import get_lr_for_epoch, should_trigger_event
+from rebm.training.scheduling import should_trigger_event
 
 logging.basicConfig(
     level=logging.INFO,
@@ -322,16 +322,6 @@ def train(cfg: TrainConfig):
                 )
                 max_epochs_reached = True
                 break
-
-            if cfg.optimizer == "sgd" and not cfg.fixed_lr:
-                current_lr = get_lr_for_epoch(
-                    cfg.lr,
-                    indist_epoch,
-                    cfg.total_epochs,
-                    cfg.data.indist_dataset,
-                )
-                for param_group in optimizer.param_groups:
-                    param_group["lr"] = current_lr
 
             wandb.log(
                 {

@@ -190,12 +190,10 @@ class TrainConfig:
     def __post_init__(self):
         if self.wandb_dir is None:
             self.wandb_dir = "./"
-        if (
-            self.optimizer == "sgd"
-            and self.total_epochs is None
-            and not self.fixed_lr
-        ):
-            raise ValueError("total_epochs must be set for SGD optimizer")
+        if not self.fixed_lr:
+            raise ValueError(
+                "fixed_lr must be True. Dynamic learning rate schedules are not supported."
+            )
         if self.indist_train_only and self.indist_clean_extra:
             raise ValueError(
                 "indist_clean_extra cannot be True when indist_train_only is True"
