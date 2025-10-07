@@ -27,8 +27,8 @@ from rebm.training.metrics import (
     ClassificationMetrics,
     ImageGenerationMetrics,
     TrainingMetrics,
-    compute_training_metrics,
-    compute_training_metrics_clf,
+    compute_ebm_metrics,
+    compute_clf_adv_loss,
 )
 from rebm.training.scheduling import should_trigger_event
 
@@ -389,30 +389,31 @@ def train(cfg: TrainConfig):
             train_indist_labels = train_indist_batch[1]
 
             optimizer.zero_grad()
-            train_metrics = compute_training_metrics(
+
+            ebm_metrics = compute_ebm_metrics(
                 indist_imgs=train_indist_imgs,
                 indist_labels=train_indist_labels,
                 outdist_imgs=train_outdist_imgs,
                 outdist_step=cur_outdist_steps,
                 **get_metrics_shared_kwargs,
             )
-            train_indist_imgs_clf, train_indist_labels_clf = next(
-                train_indist_iter_clf
-            )
-            train_indist_imgs_clf = train_indist_imgs_clf.to(cfg.device)
-            train_indist_labels_clf = train_indist_labels_clf.to(
-                cfg.device
-            )
 
-            clf_loss = compute_training_metrics_clf(
-                indist_imgs=train_indist_imgs_clf,
-                indist_labels=train_indist_labels_clf,
+            indist_imgs_clf, indist_labels_clf = next(train_indist_iter_clf)
+            indist_imgs_clf = indist_imgs_clf.to(cfg.device)
+            indist_labels_clf = indist_labels_clf.to(cfg.device)
+
+            clf_loss = compute_clf_adv_loss(
+                indist_imgs=indist_imgs_clf,
+                indist_labels=indist_labels_clf,
                 **get_metrics_shared_kwargs_clf,
             )
-            train_adv_auc_deque.append(train_metrics.adv_auc)
-            train_clean_auc_deque.append(train_metrics.clean_auc)
-            (train_metrics.loss * cfg.bce_weight + clf_loss * cfg.clf_lr_multiplier).backward()
+
+            # Backpropagate combined loss and update weights
+            total_loss = ebm_metrics.loss + clf_loss
+            total_loss.backward()
             optimizer.step()
+            train_adv_auc_deque.append(ebm_metrics.adv_auc)
+            train_clean_auc_deque.append(ebm_metrics.clean_auc)
 
             if cfg.use_ema:
                 with torch.no_grad():
@@ -420,11 +421,11 @@ def train(cfg: TrainConfig):
 
 
             if global_step_one_indexed % 20 == 0:
-                train_metrics_dict = train_metrics.to_simple_dict()
+                ebm_metrics_dict = ebm_metrics.to_simple_dict()
                 metrics_str = ", ".join(
                     [
                         f"{k}: {float(v):.5f}"
-                        for k, v in train_metrics_dict.items()
+                        for k, v in ebm_metrics_dict.items()
                     ]
                 )
                 LOGGER.info(
@@ -437,17 +438,17 @@ def train(cfg: TrainConfig):
 
             if is_metric_logging_step:
                 wandb.log(
-                    dict_append_label(train_metrics.to_simple_dict(), "train_"),
+                    dict_append_label(ebm_metrics.to_simple_dict(), "train_"),
                     step=n_imgs_seen,
                 )
 
             if is_image_logging_step:
                 for label, imgs in [
-                    ("train_indist_imgs_clf", train_indist_imgs_clf),
-                    ("train_indist_imgs", train_metrics.indist_imgs),
-                    ("train_outdist_imgs", train_metrics.outdist_imgs_clean),
-                    ("train_error_imgs", train_metrics.outdist_imgs_error),
-                    ("train_adv_imgs", train_metrics.adv_imgs),
+                    ("train_indist_imgs_clf", indist_imgs_clf),
+                    ("train_indist_imgs", ebm_metrics.indist_imgs),
+                    ("train_outdist_imgs", ebm_metrics.outdist_imgs_clean),
+                    ("train_error_imgs", ebm_metrics.outdist_imgs_error),
+                    ("train_adv_imgs", ebm_metrics.adv_imgs),
                     ("train_gen_imgs", image_generation_metrics.gen_imgs),
                 ]:
                     log_image_grid(label, imgs, cfg, n_imgs_seen)

@@ -92,4 +92,3 @@ fixed_lr: true
 wandb_dir: "wandb/robust-ebms-2"
 use_ema: true
 logsumexp: true
-bce_weight: 1

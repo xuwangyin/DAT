@@ -218,7 +218,7 @@ def compute_metrics(
     return Metrics(**auc_metrics)
 
 
-def compute_training_metrics(
+def compute_ebm_metrics(
     *,
     indist_imgs: torch.Tensor,
     indist_labels: torch.Tensor,
@@ -334,7 +334,7 @@ def compute_training_metrics(
     return TrainingMetrics(**ret_metrics_dict)
 
 
-def compute_training_metrics_clf(
+def compute_clf_adv_loss(
     *,
     indist_imgs: torch.Tensor,
     indist_labels: torch.Tensor,

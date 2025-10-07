@@ -171,8 +171,6 @@ class TrainConfig:
     fixed_lr: bool = False
     logsumexp: bool = True
     logsumexp_sampling: bool = False
-    bce_weight: float = 1.0
-    clf_lr_multiplier: float = 1.0
     eval_only: bool = False
     use_counterfactuals: bool = False
     evaluate_ood_detection: bool = False
