@@ -53,9 +53,9 @@ python train.py model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
 
 - **Classification Accuracy**: Evaluate standard and robust accuracy:
   ```bash
-  python eval_acc.py $config_file
+  python run_acc_eval.py $config_file
   ```
-  Example: `python eval_acc.py model_configs/cifar10-dat-WideResNet34x10-T50.yaml`
+  Example: `python run_acc_eval.py model_configs/cifar10-dat-WideResNet34x10-T50.yaml`
 
 - **Fréchet Inception Distance (FID)**: Evaluate the quality of generated images using FID:
   ```bash
@@ -65,7 +65,7 @@ python train.py model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
 
 - **Expected Calibration Error (ECE)**: Evaluate the calibration quality of model predictions:
   ```bash
-  python eval_acc.py --calibration $config_file
+  python run_acc_eval.py --calibration $config_file
   ```
 
 - **Out-of-Distribution (OOD) Detection**: Evaluate how well models detect out-of-distribution inputs:
