@@ -1,0 +1,11 @@
+method: "dat"
+dataset: "imagenet"
+checkpoint: wandb/robust-ebms-2/wandb/run-20250918_061346-u5ju8b17/files/model_bestfid.pth
+model_type: "ResNet50ImageNet"
+train_cmd: "python -m rebm.training.train experiments/imagenet/imagenet_indistonly_joint_resnet50_bs512_imagenetnormalization_newopenimages_stepsize2.0_ema_imglogsteps15_sweepsamples2560_300K.yaml AUC_th=0.4"
+fid_eval_config: "experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml"
+fid_num_steps: 15
+pgd_epsilon: 3.0
+notes: |
+  Dual-AT (T=30) in the ImageNet table.
+  experiments/imagenet/imagenet_indistonly_joint_resnet50_bs512_imagenetnormalization_newopenimages_stepsize2.0_ema_imglogsteps15_sweepsamples2560_300K.yaml AUC_th=0.4

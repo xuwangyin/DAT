@@ -1,0 +1,91 @@
+data:
+  indist_dataset: "cifar10-conditional"
+  indist_ds_dir: "./datasets"
+  mixed_id: false
+  outdist_dataset: "tinyimages"
+  outdist_std_dir: "./data/tiny_images.bin"
+  num_workers: 2
+  num_classes: 10
+
+
+attack:
+  attack_type: "pgd"
+  max_steps: 50  # Number of PGD steps for out-distribution adversarial attack
+  fixed_steps: 10 # TODO
+  start_step: 0
+  step_size: 0.1  # PGD attack step size
+  eps: .inf  # Perturbation limit for out-distribution adversarial attack
+
+indist_attack_clf:
+  attack_type: "pgd"
+  max_steps: 10  # Number of PGD steps for out-distribution adversarial attack
+  fixed_steps: 10 # TODO
+  start_step: 10
+  step_size: 0.1  # PGD attack step size
+  eps: 0.5  # CIFAR-10 standard for L2 perturbation
+
+model:
+  model_type: "WideResNet34x10"
+  ckpt_path: "checkpoints/Cifar10Models/WideResNet34x10/Adversarial Training_25-04-2025_21:24:11/best_avg.pth"
+  which_logit: "first"
+  normalize_input: true
+  use_batchnorm: false
+
+image_log:
+  attack_type: "pgd"
+  num_steps: 32
+  step_size: 0.2
+  eps: .inf
+  log_fid: true
+  data_dir: "./data/fid_stats/fid_stats_cifar10_train.npz"
+  ood_data_dir: "./data/cifar_fid_imgs_50K.pt"
+  img_extension: "png"
+  num_samples: 10000
+  # batch_size: 5000
+
+
+optimizer: sgd
+wd: 0.0005  # Weight decay for optimizer
+lr: 0.001  # Learning rate
+r1reg: 0  # Weight for R1 regularization
+# indist_steps: 5  # Number of PGD steps for in-distribution adversarial attack
+# indist_eps: .inf  # Perturbation limit for in-distribution adversarial attack
+# indist_aug: false  # Perform data augmentation on in-distribution data
+# pretrain: false  # Use pretrained model for the D model
+batch_size: 128
+# epochs_per_step: 5  # number of training epochs for each step
+AUC_th: 0.8  # When the AUC reaches the threshold, interrupt the training
+# fid_log_interval: 500  # Log fid every 500 iterations
+rand_seed: 1
+# ood_detection: false
+samples_per_attack_step: null
+
+clf_indist_weight: 1.0
+clf_outdist_weight: 0.0
+clf_adv_weight: 1.0
+r1_indist_weight: 1.0
+r1_outdist_weight: 0.0
+r1_adv_weight: 0.0
+min_imgs_per_threshold: 1000
+
+# Logging parameters
+n_imgs_per_metrics_log: 50000
+n_imgs_per_image_log: 5000000
+n_imgs_per_evaluation_log: 50000
+n_imgs_per_ckpt_save: 1000000
+wandb_project: "DAT"
+wandb_disabled: false
+tags: ['cifar10']
+fp16: false
+robust_eval: true
+augm_type_classification: "autoaugment_cutout"
+augm_type_generation: "original"
+tinyimages_loader: "innout"
+
+
+fixed_lr: true
+
+# Optional parameters (will use default paths if not specified)
+wandb_dir: "wandb/robust-ebms-2"
+use_ema: true
+logsumexp: true

@@ -1,0 +1,100 @@
+data:
+  indist_dataset: "ImageNet"
+  indist_ds_dir: "data/ImageNet"
+  mixed_id: false
+  outdist_dataset: "OpenImageO"
+  outdist_std_dir: "data/OpenImage-O-large/train"
+  num_workers: 16
+  num_classes: 1000
+
+attack:
+  attack_type: "pgd"
+  max_steps: 50
+  fixed_steps: 50
+  start_step: 0
+  step_size: 2.0
+  eps: .inf  # Perturbation limit for out-distribution adversarial attack
+
+# https://github.com/M4xim4l/InNOutRobustness/blob/d81d1d26e5ebc9193009e3d92bd67b5e01d6cfd6/utils/run_file_helpers.py#L255
+indist_attack_clf:
+  attack_type: "pgd"
+  max_steps: 3  # Number of PGD steps for out-distribution adversarial attack
+  fixed_steps: 3 # TODO
+  start_step: 3
+  step_size: 2.0  # PGD attack step size
+  eps: 3.0  # CIFAR-10 standard for L2 perturbation
+
+model:
+  model_type: "ResNet50ImageNet"
+  ckpt_path: "checkpoints/resnet50_l2_eps3_model.ckpt"
+  which_logit: "first"
+  normalize_input: true
+  use_batchnorm: false
+
+image_log:
+  attack_type: "pgd"
+  num_steps: 15
+  step_size: 8
+  eps: 10000
+  log_fid: true # TODO
+  data_dir: "./data/fid_stats/imagenet_train_stats.npz" # TODO note restrictedimagenet is highly inbalnaced, we could use balacned sampling
+  ood_data_dir: "./data/OpenImage-O-large/fid_eval"
+  img_extension: "png"
+  num_samples: 10000
+
+  # Adaptive step selection
+  adaptive_steps: true
+  step_sweep_range: null
+  sweep_num_samples: 2560
+
+
+
+optimizer: sgd
+wd: 0.0005  # Weight decay for optimizer
+lr: 0.001  # Learning rate
+r1reg: 0  # Weight for R1 regularization
+# indist_steps: 5  # Number of PGD steps for in-distribution adversarial attack
+# indist_eps: .inf  # Perturbation limit for in-distribution adversarial attack
+# indist_aug: false  # Perform data augmentation on in-distribution data
+# pretrain: false  # Use pretrained model for the D model
+batch_size: 512
+# epochs_per_step: 5  # number of training epochs for each step
+AUC_th: 0.70  # When the AUC reaches the threshold, interrupt the training
+# fid_log_interval: 500  # Log fid every 500 iterations
+rand_seed: 0
+# ood_detection: false
+samples_per_attack_step: null
+
+clf_indist_weight: 1.0
+clf_outdist_weight: 0.0
+clf_adv_weight: 1.0
+r1_indist_weight: 1.0
+r1_outdist_weight: 0.0
+r1_adv_weight: 0.0
+min_imgs_per_threshold: 1000
+
+# Logging parameters
+n_imgs_per_metrics_log: 50000
+n_imgs_per_image_log: 5000000
+n_imgs_per_evaluation_log: 50000
+n_imgs_per_ckpt_save: 1000000
+wandb_project: "DAT"
+wandb_disabled: false
+tags: ['cifar100']
+fp16: false
+robust_eval: true
+augm_type_classification: "default"
+augm_type_generation: "generation_id"
+tinyimages_loader: "innout"
+
+
+fixed_lr: true
+
+# Optional parameters (will use default paths if not specified)
+wandb_dir: "wandb/robust-ebms-2"
+use_ema: true
+logsumexp: true
+indist_train_only: false
+
+# OpenImages dataset size limit - use 100K samples instead of full ~330K
+openimages_max_samples: 100000

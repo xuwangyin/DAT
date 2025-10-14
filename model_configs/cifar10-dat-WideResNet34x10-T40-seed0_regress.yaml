@@ -1,0 +1,19 @@
+# Model Configuration for CIFAR-10 dual-AT WideResNet34x10 model
+# wandb/robust-ebms-2/wandb/run-20250506_140002-4oni26z2
+
+method: "dat"
+dataset: cifar10
+checkpoint: wandb/robust-ebms-2/wandb/run-20251005_205314-6swypvug/files/model_bestfid.pth
+model_type: WideResNet34x10
+train_cmd: "python -m rebm.training.train experiments/cifar10/cifar10_conditional_r1reg0_augauto_innoutloader_steps40_bs128_indistxent_sgd_lr0.001_stesp50_wd_wrn3410_indistaugoriginal_innoutpretrained_mean0_bestavg_ema_logsumexp_seed1.yaml"
+
+# FID evaluation configuration
+fid_eval_config: experiments/cifar10/eval_fid/cifar10_conditional_wrn3410_eval_fid_steps33.yaml
+fid_num_steps: 33
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 0.5
+
+# Training details
+notes: |
+  Dual-AT (T=40) in cifar10 table, trained with AUC_th=0.8

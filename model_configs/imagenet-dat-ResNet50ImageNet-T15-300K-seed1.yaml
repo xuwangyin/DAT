@@ -1,0 +1,17 @@
+# Model Configuration for ImageNet dual-AT ResNet50 model
+
+method: "dat"
+dataset: imagenet
+checkpoint: wandb/robust-ebms-2/wandb/run-20250918_123627-hn3klw0q/files/model_bestfid.pth
+model_type: ResNet50ImageNet
+train_cmd: "python -m rebm.training.train experiments/imagenet/imagenet_indistonly_joint_resnet50_bs512_imagenetnormalization_newopenimages_stepsize2.0_ema_imglogsteps15_sweepsamples2560_300K_aucth0.7_seed1.yaml"
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 13
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+
+# Training details
+notes: ""

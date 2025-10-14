@@ -1,0 +1,20 @@
+# Model Configuration for CIFAR-100 dual-AT WideResNet34x10 model
+# wandb/robust-ebms-2/wandb/run-20250505_134944-pki61h9m
+
+method: "dat"
+dataset: cifar100
+checkpoint: wandb/robust-ebms-2/wandb/run-20250505_134944-pki61h9m/files/model_bestfid.pth
+model_type: WideResNet34x10
+train_cmd: "python -m rebm.training.train experiments/cifar100/cifar100_conditional_r1reg0_augauto_innoutloader_steps40_bs128_indistxent_sgd_lr0.01_stesp50_wd_wrn3410_indistaugoriginal_innoutpretrained_mean0_bestavg_ema_logsumexp_bceweight1.yaml"
+
+# FID evaluation configuration
+fid_eval_config: experiments/cifar100/eval_fid/cifar100_conditional_wrn3410_eval_fid.yaml
+fid_num_steps: 32
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 0.5
+
+# Training details
+notes: |
+  Dual-AT CIFAR-100 WideResNet34x10 model
+  Checkpoint: run-20250505_134944-pki61h9m
