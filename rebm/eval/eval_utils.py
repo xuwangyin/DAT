@@ -12,23 +12,18 @@ from typing import Callable, Dict, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.data
 import torchvision
 import torchvision.transforms as transforms
 from sklearn import metrics
 from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
+
 from rebm.attacks.attack_steps import L2Step, LinfStep
 from rebm.training.config_classes import ImageLogConfig
-import torch.nn.functional as F
-from torchmetrics.image.inception import InceptionScore
-from PIL import Image
 
-
-
-sys.path.insert(
-    0, "pytorch-fid/src"
-)
+sys.path.insert(0, "pytorch-fid/src")
 from pytorch_fid.fid_score import calculate_fid_given_paths
 
 from rebm.attacks.adv_attacks import adam_attack, pgd_attack, pgd_attack_xent
@@ -87,7 +82,7 @@ def generate_images(
     # If eps is 0.0, return the original images without modification
     if eps is not None and float(eps) == 0.0:
         return x.clone()
-        
+
     if attack_type == "adam":
         imgs = adam_attack(
             model=model,
@@ -145,7 +140,9 @@ def log_generate_images(
     return gen_imgs
 
 
-def evaluate_image_generation(model: nn.Module, cfg) -> tuple[float | None, torch.Tensor | None]:
+def evaluate_image_generation(
+    model: nn.Module, cfg
+) -> tuple[float | None, torch.Tensor | None]:
     """Compute FID (if enabled) and sample images for logging."""
     assert_no_grad(model)
     fid, gen_imgs = None, None
@@ -180,37 +177,47 @@ def evaluate_image_generation(model: nn.Module, cfg) -> tuple[float | None, torc
 def find_optimal_steps(cfg, model: nn.Module) -> int:
     if not cfg.image_log.adaptive_steps:
         return cfg.image_log.num_steps
-    
+
     if cfg.image_log.step_sweep_range is not None:
         step_candidates = cfg.image_log.step_sweep_range
     else:
         base_steps = cfg.image_log.num_steps
-        step_candidates = [max(1, base_steps + offset) for offset in [-4, -3, -2, -1, 0, 1, 2, 3, 4]]
+        step_candidates = [
+            max(1, base_steps + offset)
+            for offset in [-4, -3, -2, -1, 0, 1, 2, 3, 4]
+        ]
     sweep_samples = cfg.image_log.sweep_num_samples
-    
-    LOGGER.info(f"Sweeping steps {step_candidates} with {sweep_samples} samples each")
-    
+
+    LOGGER.info(
+        f"Sweeping steps {step_candidates} with {sweep_samples} samples each"
+    )
+
     step_results = {}
     base_save_dir = cfg.image_log.save_dir
-    
+
     for num_steps in step_candidates:
         step_save_dir = f"{base_save_dir}_sweep_{num_steps}steps"
-        
+
         override_cfg = {
-            'num_steps': num_steps,
-            'num_samples': sweep_samples,
-            'save_dir': step_save_dir
+            "num_steps": num_steps,
+            "num_samples": sweep_samples,
+            "save_dir": step_save_dir,
         }
-        
+
         try:
-            fid = compute_fid(cfg, model, override_fid_cfg=override_cfg, 
-                            compute_is=False, save_visualization_grids=False)
+            fid = compute_fid(
+                cfg,
+                model,
+                override_fid_cfg=override_cfg,
+                compute_is=False,
+                save_visualization_grids=False,
+            )
             step_results[num_steps] = fid
             LOGGER.info(f"Steps {num_steps}: FID = {fid:.3f}")
         except Exception as e:
             LOGGER.warning(f"Failed to compute FID for {num_steps} steps: {e}")
-            step_results[num_steps] = float('inf')
-    
+            step_results[num_steps] = float("inf")
+
     if step_results:
         optimal_steps = min(step_results, key=step_results.get)
         optimal_fid = step_results[optimal_steps]
@@ -233,15 +240,15 @@ def compute_fid(
         fid_cfg = ImageLogConfig(**fid_cfg_dict)
     else:
         fid_cfg = cfg.image_log
-        
+
     batch_size = cfg.batch_size
     num_workers = cfg.data.num_workers
     savedir = fid_cfg.save_dir
-    
+
     # Add target class to save directory if specified
     if fid_cfg.target_class is not None:
         savedir = f"{savedir}_class{fid_cfg.target_class}"
-    
+
     pathlib.Path(savedir).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if os.path.isfile(fid_cfg.ood_data_dir):
@@ -279,7 +286,9 @@ def compute_fid(
 
     # Initialize dictionaries to accumulate samples by class
     max_samples_per_class = 10  # Default max samples to collect for each class
-    num_classes_to_display = min(10, cfg.data.num_classes)  # Display at most 10 classes
+    num_classes_to_display = min(
+        10, cfg.data.num_classes
+    )  # Display at most 10 classes
 
     # Dictionaries to store samples by class
     gen_samples_by_class = {i: [] for i in range(num_classes_to_display)}
@@ -295,12 +304,12 @@ def compute_fid(
         # Calculate how many samples we actually need for this batch
         samples_saved = i * batch_size
         remaining_samples = min(batch_size, total_samples - samples_saved)
-        
+
         # Extract the labels for the current batch (limit to actual samples needed)
         start_idx = i * batch_size
         end_idx = start_idx + remaining_samples
         attack_labels = all_attack_labels[start_idx:end_idx]
-        
+
         # Also limit seed_imgs to match attack_labels size
         seed_imgs = seed_imgs[:remaining_samples]
 
@@ -320,8 +329,12 @@ def compute_fid(
             if class_id < num_classes_to_display:
                 # Only add more samples if we haven't reached max_samples for this class
                 if len(gen_samples_by_class[class_id]) < max_samples_per_class:
-                    gen_samples_by_class[class_id].append(gen_imgs[j].cpu().clone())
-                    seed_samples_by_class[class_id].append(seed_imgs[j].cpu().clone())
+                    gen_samples_by_class[class_id].append(
+                        gen_imgs[j].cpu().clone()
+                    )
+                    seed_samples_by_class[class_id].append(
+                        seed_imgs[j].cpu().clone()
+                    )
 
         # Save all images for FID calculation
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -329,10 +342,14 @@ def compute_fid(
                 executor.submit(save_image, gen_imgs[j], samples_saved + j)
 
     if fid_cfg.target_class is not None:
-        return 
+        return
     # Count actual generated samples
-    actual_samples = len(list(pathlib.Path(savedir).glob(f'*.{fid_cfg.img_extension}')))
-    LOGGER.info(f"Generated {actual_samples} samples (requested: {fid_cfg.num_samples})")
+    actual_samples = len(
+        list(pathlib.Path(savedir).glob(f"*.{fid_cfg.img_extension}"))
+    )
+    LOGGER.info(
+        f"Generated {actual_samples} samples (requested: {fid_cfg.num_samples})"
+    )
 
     # Create image grids from accumulated samples
     gen_grid_images = []
@@ -357,7 +374,7 @@ def compute_fid(
             gen_grid_tensor,
             nrow=max_samples_per_class,
             padding=1,
-            normalize=True
+            normalize=True,
         )
 
         # Make grid for seed images
@@ -365,7 +382,7 @@ def compute_fid(
             seed_grid_tensor,
             nrow=max_samples_per_class,
             padding=1,
-            normalize=True
+            normalize=True,
         )
 
         # Create short filenames to avoid filesystem limits
@@ -396,27 +413,26 @@ def compute_fid(
         dims=2048,
         num_workers=num_workers,
     )
-    
+
     if compute_is:
         is_mean, is_std = compute_inception_score(
-            image_dir=savedir,
-            batch_size=batch_size,
-            splits=10,
-            device=device
+            image_dir=savedir, batch_size=batch_size, splits=10, device=device
         )
         LOGGER.info(f"IS: {is_mean:.3f} ± {is_std:.3f}")
-    
+
     def cleanup_directory(directory_path):
         try:
             shutil.rmtree(directory_path)
             LOGGER.info(f"Cleaned up generated images from {directory_path}")
         except Exception as e:
-            LOGGER.warning(f"Failed to clean up directory {directory_path}: {e}")
-    
+            LOGGER.warning(
+                f"Failed to clean up directory {directory_path}: {e}"
+            )
+
     # Clean up generated images in background to avoid blocking training
     with ThreadPoolExecutor(max_workers=1) as cleanup_executor:
         cleanup_executor.submit(cleanup_directory, savedir)
-    
+
     return fid
 
 
@@ -747,11 +763,12 @@ def generate_counterfactuals(model, train_loader, cfg):
         cfg (TrainConfig): Configuration parameters
     """
     import os
-    import torchvision.utils as vutils
     import uuid
+    from collections import defaultdict
+
     import torch
     import torch.nn.functional as F
-    from collections import defaultdict
+    import torchvision.utils as vutils
 
     # Create a unique directory for this model's counterfactuals
     model_id = f"{pathlib.Path(cfg.config_path).stem}_{cfg.model.model_type}_{uuid.uuid4().hex[:8]}"
@@ -858,7 +875,12 @@ def generate_counterfactuals(model, train_loader, cfg):
         fid_scores.append(class_fid)
 
         # Calculate average confidence for this class
-        class_conf = sum(class_confidences[class_idx]) / len(class_confidences[class_idx]) if class_confidences[class_idx] else 0
+        class_conf = (
+            sum(class_confidences[class_idx])
+            / len(class_confidences[class_idx])
+            if class_confidences[class_idx]
+            else 0
+        )
         confidence_scores.append(class_conf)
 
         LOGGER.info(
@@ -874,7 +896,6 @@ def generate_counterfactuals(model, train_loader, cfg):
     )
 
     return fid_scores, confidence_scores
-
 
 
 def pgd_attack_uniform_target(
@@ -920,8 +941,16 @@ def pgd_attack_uniform_target(
         logits = model(x, y=None)
 
         num_classes = logits.size(1)
-        uniform_targets = torch.full((logits.size(0), num_classes), 1.0 / num_classes).to(x.device)
-        loss = F.kl_div(F.log_softmax(logits, dim=1), uniform_targets, reduction='none').sum(dim=1).sum()
+        uniform_targets = torch.full(
+            (logits.size(0), num_classes), 1.0 / num_classes
+        ).to(x.device)
+        loss = (
+            F.kl_div(
+                F.log_softmax(logits, dim=1), uniform_targets, reduction="none"
+            )
+            .sum(dim=1)
+            .sum()
+        )
 
         (grad,) = torch.autograd.grad(
             outputs=loss,
@@ -937,6 +966,7 @@ def pgd_attack_uniform_target(
             x = step.project(x)
     return x.clone().detach()
 
+
 def ood_detection(model, indist_loader, outdist_loader, cfg):
     """
     Evaluate OOD detection capability by comparing in-distribution samples against both
@@ -951,9 +981,9 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
     Returns:
         tuple: (clean_ood_auroc, adv_ood_auroc) AUROC scores for OOD detection
     """
+    import numpy as np
     import torch
     import torch.nn.functional as F
-    import numpy as np
     from sklearn import metrics
 
     # Ensure model is in evaluation mode
@@ -978,26 +1008,36 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
             if cfg.ood_detection_logsumexp:
                 batch_outputs = torch.logsumexp(logits, dim=1).cpu().numpy()
             else:
-                batch_outputs = torch.max(F.softmax(logits, dim=1), dim=1)[0].cpu().numpy()
+                batch_outputs = (
+                    torch.max(F.softmax(logits, dim=1), dim=1)[0].cpu().numpy()
+                )
             indist_outputs.append(batch_outputs)
 
     # Concatenate all batch outputs
     indist_outputs = np.concatenate(indist_outputs)
 
     # Process out-of-distribution samples (limited to MAX_OOD_SAMPLES)
-    LOGGER.info(f"Processing out-of-distribution samples (max {MAX_OOD_SAMPLES} samples)...")
+    LOGGER.info(
+        f"Processing out-of-distribution samples (max {MAX_OOD_SAMPLES} samples)..."
+    )
     ood_samples_processed = 0
 
     for batch in tqdm(outdist_loader, desc="Out-of-distribution", disable=None):
         if ood_samples_processed >= MAX_OOD_SAMPLES:
             break
-            
-        ood_imgs = batch[0].to(cfg.device) if isinstance(batch, list) else batch.to(cfg.device)
+
+        ood_imgs = (
+            batch[0].to(cfg.device)
+            if isinstance(batch, list)
+            else batch.to(cfg.device)
+        )
         batch_size = ood_imgs.shape[0]
-        
+
         # Determine how many samples to process from this batch
-        samples_to_process = min(batch_size, MAX_OOD_SAMPLES - ood_samples_processed)
-        
+        samples_to_process = min(
+            batch_size, MAX_OOD_SAMPLES - ood_samples_processed
+        )
+
         # Only process the required number of samples from this batch
         if samples_to_process < batch_size:
             ood_imgs = ood_imgs[:samples_to_process]
@@ -1006,9 +1046,15 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
         with torch.no_grad():
             clean_logits = model(x=ood_imgs, y=None)
             if cfg.ood_detection_logsumexp:
-                clean_batch_outputs = torch.logsumexp(clean_logits, dim=1).cpu().numpy()
+                clean_batch_outputs = (
+                    torch.logsumexp(clean_logits, dim=1).cpu().numpy()
+                )
             else:
-                clean_batch_outputs = torch.max(F.softmax(clean_logits, dim=1), dim=1)[0].cpu().numpy()
+                clean_batch_outputs = (
+                    torch.max(F.softmax(clean_logits, dim=1), dim=1)[0]
+                    .cpu()
+                    .numpy()
+                )
             ood_clean_outputs.append(clean_batch_outputs)
 
         # Adjust eps and step_size based on image size (224x224 vs others)
@@ -1024,7 +1070,7 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
                     adv_targets=None,
                     logsumexp=True,
                     eps=3.0,
-                    step_size=1.0
+                    step_size=1.0,
                 )
             else:
                 adv_ood_imgs = pgd_attack_uniform_target(
@@ -1047,7 +1093,7 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
                     adv_targets=None,
                     logsumexp=True,
                     eps=1.0,
-                    step_size=0.1
+                    step_size=0.1,
                 )
             else:
                 adv_ood_imgs = pgd_attack_uniform_target(
@@ -1066,7 +1112,9 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
             if cfg.ood_detection_logsumexp:
                 batch_outputs = torch.logsumexp(logits, dim=1).cpu().numpy()
             else:
-                batch_outputs = torch.max(F.softmax(logits, dim=1), dim=1)[0].cpu().numpy()
+                batch_outputs = (
+                    torch.max(F.softmax(logits, dim=1), dim=1)[0].cpu().numpy()
+                )
             ood_adv_outputs.append(batch_outputs)
 
         # Update the count of processed samples
@@ -1079,13 +1127,17 @@ def ood_detection(model, indist_loader, outdist_loader, cfg):
     ood_adv_outputs = np.concatenate(ood_adv_outputs)
 
     # Compute AUROC for clean OOD detection
-    clean_y_true = np.concatenate([np.ones_like(indist_outputs), np.zeros_like(ood_clean_outputs)])
+    clean_y_true = np.concatenate(
+        [np.ones_like(indist_outputs), np.zeros_like(ood_clean_outputs)]
+    )
     clean_y_score = np.concatenate([indist_outputs, ood_clean_outputs])
     clean_fpr, clean_tpr, _ = metrics.roc_curve(clean_y_true, clean_y_score)
     clean_auroc = metrics.auc(clean_fpr, clean_tpr)
 
     # Compute AUROC for adversarial OOD detection
-    adv_y_true = np.concatenate([np.ones_like(indist_outputs), np.zeros_like(ood_adv_outputs)])
+    adv_y_true = np.concatenate(
+        [np.ones_like(indist_outputs), np.zeros_like(ood_adv_outputs)]
+    )
     adv_y_score = np.concatenate([indist_outputs, ood_adv_outputs])
     adv_fpr, adv_tpr, _ = metrics.roc_curve(adv_y_true, adv_y_score)
     adv_auroc = metrics.auc(adv_fpr, adv_tpr)

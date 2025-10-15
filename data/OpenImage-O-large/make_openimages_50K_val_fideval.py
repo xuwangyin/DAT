@@ -1,48 +1,53 @@
-import torch
-import matplotlib.pyplot as plt
-import torchvision
-import torch
-import torchvision
-import torchvision.transforms as transforms
-import numpy as np
+import os
 import pathlib
-from tqdm import tqdm
-import os
-from torchvision.transforms.functional import to_pil_image
 from concurrent.futures import ThreadPoolExecutor
-import os
+
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, WeightedRandomSampler
-
+from torchvision.transforms.functional import to_pil_image
+from tqdm import tqdm
 
 
 def get_imagenet256_dataset(datadir, interpolation=2, transform=None):
     if transform is None:
-        transform = transforms.Compose([transforms.RandomResizedCrop(224, interpolation=interpolation),
-                                        transforms.RandomHorizontalFlip(),
-                                        transforms.ToTensor()])
-    print('imagenet transform:')
+        transform = transforms.Compose(
+            [
+                transforms.RandomResizedCrop(224, interpolation=interpolation),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+            ]
+        )
+    print("imagenet transform:")
     print(transform)
     return torchvision.datasets.ImageFolder(datadir, transform)
+
 
 torch.manual_seed(0)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(0)
 
-ood_dataset = get_imagenet256_dataset(datadir='data/openimages/val')
+ood_dataset = get_imagenet256_dataset(datadir="data/openimages/val")
 print(f"Dataset size: {len(ood_dataset)} samples")
 
 batch_size = 100
-loader = torch.utils.data.DataLoader(ood_dataset, batch_size=batch_size,
-                                        shuffle=True, generator=torch.Generator().manual_seed(0), num_workers=8)
+loader = torch.utils.data.DataLoader(
+    ood_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    generator=torch.Generator().manual_seed(0),
+    num_workers=8,
+)
 
-savedir = 'OpenImagesO_fid_eval/data'
+savedir = "OpenImagesO_fid_eval/data"
 max_iters = 50000 // batch_size
 samples_saved = 0
+
+
 def save_image(image, idx):
-    to_pil_image(image).save(os.path.join(savedir, f'{idx:06d}.png'))
+    to_pil_image(image).save(os.path.join(savedir, f"{idx:06d}.png"))
+
+
 pathlib.Path(savedir).mkdir(parents=True, exist_ok=True)
 for i, data in tqdm(zip(range(max_iters), loader), total=max_iters):
     seed_imgs = data[0] if isinstance(data, list) else data

@@ -34,6 +34,7 @@ def assert_no_grad(model):
 
     return True
 
+
 if TYPE_CHECKING:
     from rebm.training.train import TrainConfig
 

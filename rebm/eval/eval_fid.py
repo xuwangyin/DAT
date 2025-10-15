@@ -6,8 +6,8 @@ import dataclasses
 import logging
 import sys
 
-from rebm.training.config_classes import TrainConfig, load_train_config
 from rebm.eval.eval_utils import evaluate_image_generation
+from rebm.training.config_classes import TrainConfig, load_train_config
 from rebm.training.modeling import get_model
 
 LOGGER = logging.getLogger(__name__)
@@ -57,10 +57,16 @@ def main(argv: list[str] | None = None) -> float:
 
     if not args or "-h" in args or "--help" in args:
         print("FID evaluation for trained models")
-        print("\nUsage: python -m rebm.eval.eval_fid CONFIG_FILE [KEY=VALUE ...]")
+        print(
+            "\nUsage: python -m rebm.eval.eval_fid CONFIG_FILE [KEY=VALUE ...]"
+        )
         print("\nExamples:")
-        print("  python -m rebm.eval.eval_fid experiments/cifar10/eval_fid/config.yaml")
-        print("  python -m rebm.eval.eval_fid experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth")
+        print(
+            "  python -m rebm.eval.eval_fid experiments/cifar10/eval_fid/config.yaml"
+        )
+        print(
+            "  python -m rebm.eval.eval_fid experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth"
+        )
         sys.exit(0)
 
     config_file = args[0]

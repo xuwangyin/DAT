@@ -1,14 +1,11 @@
 import copy
-import json
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
 from typing import Iterable, List, Literal, Optional, Tuple
 
-from omegaconf import OmegaConf
 import torch
+from omegaconf import OmegaConf
 
 
 @dataclass
@@ -44,9 +41,11 @@ class ImageLogConfig:
 
     # Adaptive FID step selection
     adaptive_steps: bool = False  # Enable adaptive step selection
-    step_sweep_range: Optional[List[int]] = None  # Steps to sweep (e.g. [1, 5, 10, 20, 30])
+    step_sweep_range: Optional[List[int]] = (
+        None  # Steps to sweep (e.g. [1, 5, 10, 20, 30])
+    )
     sweep_num_samples: int = 500  # Smaller sample count for step sweep
-    
+
     # Dependent generation params
     lr: Optional[float] = None  # only for Adam
     step_size: Optional[float] = None  # only for PGD
@@ -152,7 +151,9 @@ class TrainConfig:
     indist_clean_extra: bool = False
     fp16: bool = False
     samples_per_attack_step: int | None = None
-    n_imgs_per_evaluation_log: int | None = None  # Controls both FID and accuracy evaluation
+    n_imgs_per_evaluation_log: int | None = (
+        None  # Controls both FID and accuracy evaluation
+    )
     use_ema: bool = False
 
     # Evaluation parameters
@@ -206,14 +207,16 @@ def load_train_config(
         override_cfg = OmegaConf.from_dotlist(list(overrides))
         omega_cfg = OmegaConf.merge(omega_cfg, override_cfg)
 
-    config_dict = copy.deepcopy(
-        OmegaConf.to_container(omega_cfg, resolve=True)
-    )
+    config_dict = copy.deepcopy(OmegaConf.to_container(omega_cfg, resolve=True))
 
     config_dict["data"] = DataConfig(**config_dict.get("data", {}))
     config_dict["attack"] = AttackConfig(**config_dict.get("attack", {}))
     config_dict["model"] = create_model_config(config_dict.get("model", {}))
-    config_dict["image_log"] = ImageLogConfig(**config_dict.get("image_log", {}))
-    config_dict["indist_attack_clf"] = AttackConfig(**config_dict["indist_attack_clf"])
+    config_dict["image_log"] = ImageLogConfig(
+        **config_dict.get("image_log", {})
+    )
+    config_dict["indist_attack_clf"] = AttackConfig(
+        **config_dict["indist_attack_clf"]
+    )
 
     return TrainConfig(**config_dict)

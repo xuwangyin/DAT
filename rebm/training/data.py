@@ -12,7 +12,9 @@ import InNOutRobustness.utils.datasets as dl
 from InNOutRobustness.utils.datasets.augmentations.cifar_augmentation import (
     get_cifar10_augmentation,
 )
-from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import get_imageNet_augmentation
+from InNOutRobustness.utils.datasets.augmentations.imagenet_augmentation import (
+    get_imageNet_augmentation,
+)
 from rebm.training.config_classes import DataConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -175,12 +177,16 @@ def get_indist_dataset(
     augm_type: str = "autoaugment_cutout",
 ):
     """Get in-distribution dataset."""
-    assert split in ['train', 'val'], f"split must be 'train' or 'val', got {split}"
+    assert split in ["train", "val"], (
+        f"split must be 'train' or 'val', got {split}"
+    )
 
     match config.indist_dataset:
         case "cifar10-conditional":
-            if split == 'val':
-                assert augm_type == 'none', f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
+            if split == "val":
+                assert augm_type == "none", (
+                    f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
+                )
             indist_dataset = get_cifar10_dataset(
                 data_dir=config.indist_ds_dir,
                 split=split,
@@ -188,8 +194,10 @@ def get_indist_dataset(
                 augm_type=augm_type,
             )
         case "cifar100-conditional":
-            if split == 'val':
-                assert augm_type == 'none', f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
+            if split == "val":
+                assert augm_type == "none", (
+                    f"For CIFAR val split, augm_type must be 'none', got {augm_type}"
+                )
             indist_dataset = get_cifar100_dataset(
                 data_dir=config.indist_ds_dir,
                 split=split,
@@ -201,16 +209,20 @@ def get_indist_dataset(
 
             # Validate augmentation type for ImageNet
             if split == "train":
-                assert augm_type in ["madry", "generation_id", "generation_id_randomcrop", "none", "default"]
+                assert augm_type in [
+                    "madry",
+                    "generation_id",
+                    "generation_id_randomcrop",
+                    "none",
+                    "default",
+                ]
             else:
                 assert augm_type in ["none", "test"]
 
             transform = get_imageNet_augmentation(type=augm_type, out_size=224)
-            dataset_split = 'train' if split == 'train' else 'val'
+            dataset_split = "train" if split == "train" else "val"
             indist_dataset = torchvision.datasets.ImageNet(
-                config.indist_ds_dir,
-                split=dataset_split,
-                transform=transform
+                config.indist_ds_dir, split=dataset_split, transform=transform
             )
         case _:
             raise ValueError(f"Unknown dataset: {config.indist_dataset}")
@@ -229,7 +241,9 @@ def get_indist_dataloader(
     balanced: bool = True,
 ):
     """Get in-distribution dataloader."""
-    dataset = get_indist_dataset(config, split=split, attack=attack, augm_type=augm_type)
+    dataset = get_indist_dataset(
+        config, split=split, attack=attack, augm_type=augm_type
+    )
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -257,24 +271,41 @@ def get_outdist_dataset(
             # Determine augmentation type
             if openimages_augm is not None:
                 augm_type = openimages_augm
-                LOGGER.info(f"Using custom OpenImageO augmentation: {augm_type}")
+                LOGGER.info(
+                    f"Using custom OpenImageO augmentation: {augm_type}"
+                )
             else:
-                augm_type = "generation_od_randomcrop" if augm_type_generation == "generation_id_randomcrop" else "generation_od"
+                augm_type = (
+                    "generation_od_randomcrop"
+                    if augm_type_generation == "generation_id_randomcrop"
+                    else "generation_od"
+                )
 
             transform = get_imageNet_augmentation(type=augm_type, out_size=224)
-            dataset = torchvision.datasets.ImageFolder(config.outdist_std_dir, transform=transform)
+            dataset = torchvision.datasets.ImageFolder(
+                config.outdist_std_dir, transform=transform
+            )
             original_size = len(dataset)
 
             # Create random subset if max_samples is specified
-            if openimages_max_samples is not None and openimages_max_samples < len(dataset):
+            if (
+                openimages_max_samples is not None
+                and openimages_max_samples < len(dataset)
+            ):
                 generator = torch.Generator()
                 generator.manual_seed(42)
-                indices = torch.randperm(len(dataset), generator=generator)[:openimages_max_samples].tolist()
+                indices = torch.randperm(len(dataset), generator=generator)[
+                    :openimages_max_samples
+                ].tolist()
                 outdist_dataset = torch.utils.data.Subset(dataset, indices)
-                LOGGER.info(f"OpenImageO dataset: Using {len(outdist_dataset)} samples out of {original_size} total samples")
+                LOGGER.info(
+                    f"OpenImageO dataset: Using {len(outdist_dataset)} samples out of {original_size} total samples"
+                )
             else:
                 outdist_dataset = dataset
-                LOGGER.info(f"OpenImageO dataset: Using all {original_size} samples")
+                LOGGER.info(
+                    f"OpenImageO dataset: Using all {original_size} samples"
+                )
 
         case "tinyimages":
             if split != "train":
@@ -287,7 +318,9 @@ def get_outdist_dataset(
                 tinyimages_loader=tinyimages_loader,
             )
         case _:
-            raise ValueError(f"Unknown outdist dataset: {config.outdist_dataset}")
+            raise ValueError(
+                f"Unknown outdist dataset: {config.outdist_dataset}"
+            )
 
     return outdist_dataset
 

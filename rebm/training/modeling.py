@@ -10,11 +10,6 @@ sys.path.insert(0, "pytorch-image-models")
 
 import torch
 import wandb
-from torch import nn
-
-import rebm.models.wide_resnet_innoutrobustness
-import rebm.training.misc
-from rebm.training.config_classes import BaseModelConfig
 
 # TODO: Fix import order issue with timm
 # utils_architecture.py imports timm without sys.path.insert, which causes
@@ -23,18 +18,26 @@ from rebm.training.config_classes import BaseModelConfig
 # wide_resnet50_4 which don't exist in system timm.
 # Workaround: Commented out until utils_architecture.py adds sys.path.insert
 # from rebm.training.utils_architecture import replace_convstem
-
 # Import model classes that need to be available globally
 from timm.models.resnet import resnet50 as ResNet50ImageNet
 from timm.models.resnet import wide_resnet50_2 as WideResNet50x2ImageNet
 from timm.models.resnet import wide_resnet50_4 as WideResNet50x4ImageNet
+from torch import nn
+
+import rebm.models.wide_resnet_innoutrobustness
+import rebm.training.misc
+from rebm.training.config_classes import BaseModelConfig
 
 LOGGER = logging.getLogger(__name__)
 
 
-def load_checkpoint(model: nn.Module, ckpt_path: str, weights_only: bool = True) -> nn.Module:
+def load_checkpoint(
+    model: nn.Module, ckpt_path: str, weights_only: bool = True
+) -> nn.Module:
     """Load model checkpoint with automatic DataParallel handling."""
-    state_dict = torch.load(ckpt_path, weights_only=weights_only, map_location="cpu")
+    state_dict = torch.load(
+        ckpt_path, weights_only=weights_only, map_location="cpu"
+    )
 
     # EMA model
     if any(k.startswith("module.n_averaged") for k in state_dict.keys()):
@@ -47,14 +50,18 @@ def load_checkpoint(model: nn.Module, ckpt_path: str, weights_only: bool = True)
 
     # Check if the state_dict has 'module.' prefix (saved from DataParallel)
     # but the current model is not a DataParallel model
-    is_state_dict_data_parallel = any(k.startswith("module.") for k in state_dict.keys())
+    is_state_dict_data_parallel = any(
+        k.startswith("module.") for k in state_dict.keys()
+    )
     is_model_data_parallel = isinstance(model, nn.DataParallel)
 
     if is_state_dict_data_parallel and not is_model_data_parallel:
         # Remove 'module.' prefix for loading into non-DataParallel model
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
-            name = k[7:] if k.startswith("module.") else k  # remove 'module.' prefix
+            name = (
+                k[7:] if k.startswith("module.") else k
+            )  # remove 'module.' prefix
             new_state_dict[name] = v
         state_dict = new_state_dict
     elif not is_state_dict_data_parallel and is_model_data_parallel:
@@ -90,7 +97,9 @@ def get_model(
     model_type = model_config.model_type
 
     # ImageNet ResNet/WideResNet models
-    if "resnet" in model_type.lower() and model_type.lower().endswith("imagenet"):
+    if "resnet" in model_type.lower() and model_type.lower().endswith(
+        "imagenet"
+    ):
         model_class = globals().get(model_type)
 
         # Instantiate the model
@@ -110,8 +119,6 @@ def get_model(
 
     # ConvNeXt models from timm
     elif model_type.startswith("convnext_"):
-        from timm.models.convnext import convnext_tiny, convnext_base, convnext_small, convnext_large
-
         model_class = locals().get(model_type)
 
         # Instantiate the model with custom parameters
@@ -121,8 +128,9 @@ def get_model(
             use_layernorm=model_config.use_layernorm,
         ).to(device)
 
-        if model_config.use_convstem:
-            model = replace_convstem(model, model_type)
+        # TODO: Uncomment when utils_architecture.py is fixed
+        # if model_config.use_convstem:
+        #     model = replace_convstem(model, model_type)
 
         model = nn.DataParallel(model)
 
@@ -134,7 +142,9 @@ def get_model(
 
     # CIFAR WideResNet models
     elif model_type.lower().startswith("wideresnet"):
-        model_class = getattr(rebm.models.wide_resnet_innoutrobustness, model_type)
+        model_class = getattr(
+            rebm.models.wide_resnet_innoutrobustness, model_type
+        )
 
         # Instantiate the model
         model = model_class(
@@ -205,7 +215,9 @@ def get_optimizer(
     return optimizer
 
 
-def save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer, step: int):
+def save_checkpoint(
+    model: nn.Module, optimizer: torch.optim.Optimizer, step: int
+):
     """Save model and optimizer checkpoint.
 
     Args:

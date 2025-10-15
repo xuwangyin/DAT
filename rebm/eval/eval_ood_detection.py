@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-import sys
 import logging
+import sys
 from typing import Tuple
 
 import numpy as np
 import torch
+
 import InNOutRobustness.utils.datasets as dl
+from rebm.eval.eval_utils import ood_detection
 from rebm.training import data as training_data
 from rebm.training.config_classes import (
     TrainConfig,
     load_train_config,
 )
-from rebm.eval.eval_utils import ood_detection
 from rebm.training.modeling import get_model
 
 LOGGER = logging.getLogger(__name__)
@@ -49,7 +50,10 @@ def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
         cfg.outdist_dataset_ood_detection,
     )
 
-    if cfg.data.indist_dataset in ["cifar10-conditional", "cifar100-conditional"]:
+    if cfg.data.indist_dataset in [
+        "cifar10-conditional",
+        "cifar100-conditional",
+    ]:
         size = 32
     elif cfg.data.indist_dataset in ["RestrictedImageNet", "ImageNet"]:
         size = 224
@@ -65,7 +69,9 @@ def run_ood_evaluation(cfg: TrainConfig) -> Tuple[float, float]:
     outdist_loader = _get_outdist_loader(cfg, size)
 
     LOGGER.info("Starting OOD detection evaluation...")
-    clean_auroc, adv_auroc = ood_detection(model, indist_loader, outdist_loader, cfg)
+    clean_auroc, adv_auroc = ood_detection(
+        model, indist_loader, outdist_loader, cfg
+    )
     LOGGER.info(
         "OOD detection evaluation completed. ID: %s, OD: %s, Clean AUROC: %.4f, Adversarial AUROC: %.4f",
         cfg.data.indist_dataset,
@@ -130,7 +136,9 @@ def main(argv: list[str] | None = None) -> Tuple[float, float]:
 
     if not args or args[0] in {"-h", "--help"}:
         print("OOD detection evaluation")
-        print("\nUsage: python -m rebm.eval.eval_ood_detection CONFIG_FILE [KEY=VALUE ...]")
+        print(
+            "\nUsage: python -m rebm.eval.eval_ood_detection CONFIG_FILE [KEY=VALUE ...]"
+        )
         sys.exit(0)
 
     config_file = args[0]
@@ -138,9 +146,7 @@ def main(argv: list[str] | None = None) -> Tuple[float, float]:
 
     cfg = load_train_config(config_file, overrides)
     clean_auroc, adv_auroc = run_ood_evaluation(cfg)
-    print(
-        f"Clean AUROC: {clean_auroc:.4f}, Adversarial AUROC: {adv_auroc:.4f}"
-    )
+    print(f"Clean AUROC: {clean_auroc:.4f}, Adversarial AUROC: {adv_auroc:.4f}")
     return clean_auroc, adv_auroc
 
 

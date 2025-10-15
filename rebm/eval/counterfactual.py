@@ -6,12 +6,12 @@ import logging
 import sys
 from typing import Iterable
 
+from rebm.eval.eval_utils import generate_counterfactuals
 from rebm.training import data as training_data
 from rebm.training.config_classes import (
     TrainConfig,
     load_train_config,
 )
-from rebm.eval.eval_utils import generate_counterfactuals
 from rebm.training.modeling import get_model
 
 LOGGER = logging.getLogger(__name__)
@@ -46,7 +46,9 @@ def main(argv: Iterable[str] | None = None) -> None:
 
     if not args or args[0] in {"-h", "--help"}:
         print("Counterfactual generation")
-        print("\nUsage: python -m rebm.eval.counterfactual CONFIG_FILE [KEY=VALUE ...]")
+        print(
+            "\nUsage: python -m rebm.eval.counterfactual CONFIG_FILE [KEY=VALUE ...]"
+        )
         sys.exit(0)
 
     config_file = args[0]

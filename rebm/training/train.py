@@ -20,15 +20,18 @@ from torch import nn
 import rebm.training.data
 import rebm.training.misc
 import rebm.training.modeling
+from rebm.eval.eval_utils import (
+    eval_acc,
+    eval_robust_acc,
+    evaluate_image_generation,
+)
 from rebm.training.average_model import AveragedModel
 from rebm.training.config_classes import TrainConfig, load_train_config
-from rebm.eval.eval_utils import eval_acc, eval_robust_acc, evaluate_image_generation
 from rebm.training.metrics import (
     ClassificationMetrics,
     ImageGenerationMetrics,
-    TrainingMetrics,
-    compute_ebm_metrics,
     compute_clf_adv_loss,
+    compute_ebm_metrics,
 )
 from rebm.training.scheduling import should_trigger_event
 
@@ -43,6 +46,7 @@ LOGGER = logging.getLogger(__name__)
 @dataclasses.dataclass
 class Dataloaders:
     """Container for all dataloaders used during training."""
+
     indist_loader_ebm: torch.utils.data.DataLoader
     indist_loader_clf: torch.utils.data.DataLoader
     indist_iter_ebm: Iterable
@@ -77,29 +81,31 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
         config=cfg.data,
         batch_size=cfg.batch_size,
         shuffle=True,
-        augm_type=cfg.augm_type_generation
+        augm_type=cfg.augm_type_generation,
     )
     train_indist_loader_clf = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
         shuffle=True,
-        augm_type=cfg.augm_type_classification
+        augm_type=cfg.augm_type_classification,
     )
-    train_outdist_iter = infinite_iter(rebm.training.data.get_outdist_dataloader(
-        config=cfg.data,
-        batch_size=cfg.batch_size,
-        shuffle=True,
-        augm_type_generation=cfg.augm_type_generation,
-        tinyimages_loader=cfg.tinyimages_loader,
-        openimages_max_samples=cfg.openimages_max_samples,
-        openimages_augm=cfg.openimages_augm,
-    ))
+    train_outdist_iter = infinite_iter(
+        rebm.training.data.get_outdist_dataloader(
+            config=cfg.data,
+            batch_size=cfg.batch_size,
+            shuffle=True,
+            augm_type_generation=cfg.augm_type_generation,
+            tinyimages_loader=cfg.tinyimages_loader,
+            openimages_max_samples=cfg.openimages_max_samples,
+            openimages_augm=cfg.openimages_augm,
+        )
+    )
     test_loader_for_eval = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
         batch_size=cfg.batch_size,
         split="val",
         shuffle=False,
-        augm_type="none" if 'cifar' in cfg.data.indist_dataset else "test"
+        augm_type="none" if "cifar" in cfg.data.indist_dataset else "test",
     )
 
     return Dataloaders(
@@ -112,7 +118,9 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
     )
 
 
-def log_image_grid(label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int) -> None:
+def log_image_grid(
+    label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int
+) -> None:
     """Log image grid to wandb.
 
     Args:
@@ -122,7 +130,9 @@ def log_image_grid(label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int) 
         step: Global step for logging
     """
     padding = 0 if "cifar10" in cfg.data.indist_dataset else 2
-    image_grid = torchvision.utils.make_grid(imgs[:10], nrow=10, padding=padding)
+    image_grid = torchvision.utils.make_grid(
+        imgs[:10], nrow=10, padding=padding
+    )
     wandb.log({label: wandb.Image(image_grid)}, step=step)
 
 
@@ -144,14 +154,16 @@ def evaluate_and_log_fid(
     n_imgs_seen = global_step * cfg.batch_size
 
     fid, gen_imgs = evaluate_image_generation(model_to_eval, cfg)
-    LOGGER.info(
-        f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}"
-    )
+    LOGGER.info(f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}")
 
     is_new_best = image_generation_metrics.update(fid, gen_imgs)
     if is_new_best:
-        model_to_save = model_to_eval.module.module if cfg.use_ema else model_to_eval.module
-        LOGGER.info(f'Saving {"EMA" if cfg.use_ema else "regular"} model with best FID')
+        model_to_save = (
+            model_to_eval.module.module if cfg.use_ema else model_to_eval.module
+        )
+        LOGGER.info(
+            f"Saving {'EMA' if cfg.use_ema else 'regular'} model with best FID"
+        )
         rebm.training.modeling.save_best_fid_model(model_to_save)
         LOGGER.info(f"New best FID: {fid}")
 
@@ -223,7 +235,9 @@ def evaluate_and_log_accuracy(
         robust_test_acc=robust_test_acc,
     )
     if is_new_best_acc:
-        model_to_save = model_to_eval.module.module if cfg.use_ema else model_to_eval.module
+        model_to_save = (
+            model_to_eval.module.module if cfg.use_ema else model_to_eval.module
+        )
         rebm.training.modeling.save_best_accuracy_model(model_to_save)
 
     wandb.log(
@@ -243,7 +257,6 @@ def train(cfg: TrainConfig):
     # Create all dataloaders
     dataloaders = create_dataloaders(cfg)
     indist_loader_ebm = dataloaders.indist_loader_ebm
-    indist_loader_clf = dataloaders.indist_loader_clf
     indist_iter_ebm = dataloaders.indist_iter_ebm
     indist_iter_clf = dataloaders.indist_iter_clf
     outdist_iter = dataloaders.outdist_iter
@@ -289,7 +302,10 @@ def train(cfg: TrainConfig):
             global_step_one_indexed += 1
             n_imgs_seen = global_step_one_indexed * cfg.batch_size
 
-            if cfg.total_epochs is not None and indist_epoch >= cfg.total_epochs:
+            if (
+                cfg.total_epochs is not None
+                and indist_epoch >= cfg.total_epochs
+            ):
                 LOGGER.info(
                     f"Reached maximum number of epochs ({cfg.total_epochs}). Stopping training."
                 )
@@ -330,7 +346,9 @@ def train(cfg: TrainConfig):
             )
 
             if is_checkpoint_save_step:
-                model_to_save = ema_model.module if cfg.use_ema else model.module
+                model_to_save = (
+                    ema_model.module if cfg.use_ema else model.module
+                )
                 rebm.training.modeling.save_checkpoint(
                     model=model_to_save,
                     optimizer=optimizer,
@@ -339,7 +357,9 @@ def train(cfg: TrainConfig):
 
             if is_evaluation_step:
                 model.zero_grad()
-                model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
+                model_to_eval = (
+                    nn.DataParallel(ema_model) if cfg.use_ema else model
+                )
                 evaluate_and_log_fid(
                     model_to_eval,
                     cfg,
@@ -350,7 +370,9 @@ def train(cfg: TrainConfig):
             if is_evaluation_step and cfg.data.num_classes > 1:
                 model.eval()
                 model.zero_grad()
-                model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
+                model_to_eval = (
+                    nn.DataParallel(ema_model) if cfg.use_ema else model
+                )
                 evaluate_and_log_accuracy(
                     model_to_eval,
                     cfg,
@@ -398,7 +420,6 @@ def train(cfg: TrainConfig):
             if cfg.use_ema:
                 with torch.no_grad():
                     ema_model.update_parameters(model.module)
-
 
             if global_step_one_indexed % 20 == 0:
                 ebm_metrics_dict = ebm_metrics.to_simple_dict()
@@ -463,7 +484,9 @@ if __name__ == "__main__":
 
     if not args or "-h" in args or "--help" in args:
         print("Training script with OmegaConf for configuration management")
-        print("\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]")
+        print(
+            "\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]"
+        )
         print("\nExamples:")
         print("  python -m rebm.training.train experiments/cifar10/config.yaml")
         print(
