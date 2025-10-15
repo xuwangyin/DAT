@@ -29,8 +29,8 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml
-  %(prog)s model_configs/cifar10-dual-at-WideResNet34x10-T40-seed0.yaml --partition mi3008x
+  %(prog)s model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
+  %(prog)s model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml --partition mi3008x
         """
     )
 

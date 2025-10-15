@@ -7,14 +7,6 @@ data:
   num_workers: 2
   num_classes: 100
 
-indist_attack:
-  attack_type: "pgd"
-  max_steps: 50  # Number of PGD steps for out-distribution adversarial attack
-  fixed_steps: 33 # TODO
-  start_step: 0
-  step_size: 0.2  # PGD attack step size
-  eps: .inf  # Perturbation limit for out-distribution adversarial attack
-
 attack:
   attack_type: "pgd"
   max_steps: 50  # Number of PGD steps for out-distribution adversarial attack

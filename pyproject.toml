@@ -16,23 +16,22 @@ packages = ["rebm"]
 [tool.ruff]
 target-version = "py311"
 extend-include = ["*.ipynb"]
-exclude = ["experiments/archive/old-notebooks", 
-    "rebm/training/archive",
-    "rebm/utils.py",
-    "vision",
-    "InNOutRobustness/*", 
-    "rebm/innout_datasets",
-    # Code taken from external repos
-    "GOOD/tiny_utils/tinyimages_80mn_loader.py",
-    "rebm/models/preactresnet.py",
-    "rebm/models/robustness_resnet_cifar10.py",
-    "rebm/models/wide_resnet.py",
-    "rebm/models/wide_resnet_innoutrobustness.py",
-    "pytorch-fid",
-    "robustbench",
+exclude = [
+    # External repositories and generated data
     "InNOutRobustness",
-    "R3GAN",
+    "InNOutRobustnessMean0_cifar100",
+    "pytorch-fid",
+    "pytorch-image-models",
+    # Code taken from external repos
+    "rebm/models/wide_resnet_innoutrobustness.py",
     "rebm/training/average_model.py",
+    "rebm/training/utils_architecture.py",
+    # Untracked utility scripts and models
+    "checkpoints/",
+    "copy_wandb_runs.py",
+    "rebm/models/preactresnet.py",
+    "rebm/models/resnet.py",
+    "rebm/models/robustness_resnet_cifar10.py",
 ]
 
 # Line length 80 to makes it easier to have multiple files open side-by-side.

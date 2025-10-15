@@ -27,8 +27,8 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s model_configs/cifar10-dual-at-WideResNet34x10-ckpt1.yaml
-  %(prog)s model_configs/imagenet-dual-at-ResNet50ImageNet-ckpt1.yaml --batch-size 100
+  %(prog)s model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
+  %(prog)s model_configs/imagenet-dat-ResNet50ImageNet-T15-300K-seed0.yaml --batch-size 100
         """
     )
     
