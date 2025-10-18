@@ -117,7 +117,9 @@ def get_model(
 
         # Wrap model with DDP or DataParallel
         if use_ddp:
-            model = DDP(model, device_ids=[rank])
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
         else:
             model = nn.DataParallel(model)
 
@@ -144,7 +146,9 @@ def get_model(
 
         # Wrap model with DDP or DataParallel
         if use_ddp:
-            model = DDP(model, device_ids=[rank])
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
         else:
             model = nn.DataParallel(model)
 
@@ -169,7 +173,9 @@ def get_model(
 
         # Wrap model with DDP or DataParallel
         if use_ddp:
-            model = DDP(model, device_ids=[rank])
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
         else:
             model = nn.DataParallel(model)
 
