@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -12,10 +13,12 @@ sys.path.insert(0, "pytorch-image-models")
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.utils.data
 import torchvision.utils
 import wandb
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 import rebm.training.data
 import rebm.training.misc
@@ -65,8 +68,52 @@ def dict_append_label(d: dict, label: str) -> dict:
     return {label + k: v for k, v in d.items()}
 
 
-def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
+def average_metric_across_ranks(value: float, device: torch.device, world_size: int) -> float:
+    """Average a scalar metric across all DDP ranks."""
+    tensor = torch.tensor([value], device=device)
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+    return (tensor / world_size).item()
+
+
+def setup_distributed(cfg: TrainConfig) -> tuple[int, int, torch.device]:
+    """Setup distributed training environment.
+
+    Note: When using DDP, process group is initialized in __main__ before this function.
+
+    Returns:
+        tuple: (rank, world_size, device)
+    """
+    if cfg.use_ddp:
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+
+        # Set device for this process
+        torch.cuda.set_device(rank)
+        device = torch.device(f"cuda:{rank}")
+
+        if rank == 0:
+            LOGGER.info(f"Initialized DDP with {world_size} processes")
+            if world_size == 1:
+                LOGGER.warning(
+                    "DDP enabled with only 1 GPU. Consider setting use_ddp=False "
+                    "for better performance on single GPU."
+                )
+    else:
+        rank = 0
+        world_size = 1
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        LOGGER.info("Using DataParallel mode (non-distributed)")
+
+    return rank, world_size, device
+
+
+def create_dataloaders(cfg: TrainConfig, rank: int = 0, world_size: int = 1) -> Dataloaders:
     """Create all dataloaders needed for training.
+
+    Args:
+        cfg: Training configuration
+        rank: Process rank for DDP
+        world_size: Total number of processes for DDP
 
     Returns:
         Dataloaders instance containing:
@@ -77,35 +124,61 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
             - outdist_iter: Infinite iterator for out-distribution data
             - test_loader: Loader for test set evaluation
     """
+    # Calculate per-device batch size for DDP
+    # Config batch_size is the total/global batch size across all GPUs
+    if cfg.batch_size % world_size != 0:
+        raise ValueError(
+            f"batch_size ({cfg.batch_size}) must be divisible by world_size ({world_size})"
+        )
+    per_device_batch_size = cfg.batch_size // world_size
+
+    if rank == 0:
+        LOGGER.info(
+            f"Batch size - Per device: {per_device_batch_size}, "
+            f"Total across {world_size} device(s): {cfg.batch_size}"
+        )
+
     train_indist_loader = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
-        batch_size=cfg.batch_size,
+        batch_size=per_device_batch_size,
         shuffle=True,
         augm_type=cfg.augm_type_generation,
+        use_ddp=cfg.use_ddp,
+        rank=rank,
+        world_size=world_size,
     )
     train_indist_loader_clf = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
-        batch_size=cfg.batch_size,
+        batch_size=per_device_batch_size,
         shuffle=True,
         augm_type=cfg.augm_type_classification,
+        use_ddp=cfg.use_ddp,
+        rank=rank,
+        world_size=world_size,
     )
     train_outdist_iter = infinite_iter(
         rebm.training.data.get_outdist_dataloader(
             config=cfg.data,
-            batch_size=cfg.batch_size,
+            batch_size=per_device_batch_size,
             shuffle=True,
             augm_type_generation=cfg.augm_type_generation,
             tinyimages_loader=cfg.tinyimages_loader,
             openimages_max_samples=cfg.openimages_max_samples,
             openimages_augm=cfg.openimages_augm,
+            use_ddp=cfg.use_ddp,
+            rank=rank,
+            world_size=world_size,
         )
     )
     test_loader_for_eval = rebm.training.data.get_indist_dataloader(
         config=cfg.data,
-        batch_size=cfg.batch_size,
+        batch_size=per_device_batch_size,
         split="val",
         shuffle=False,
         augm_type="none" if "cifar" in cfg.data.indist_dataset else "test",
+        use_ddp=cfg.use_ddp,
+        rank=rank,
+        world_size=world_size,
     )
 
     return Dataloaders(
@@ -119,7 +192,7 @@ def create_dataloaders(cfg: TrainConfig) -> Dataloaders:
 
 
 def log_image_grid(
-    label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int
+    label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int, rank: int = 0
 ) -> None:
     """Log image grid to wandb.
 
@@ -128,7 +201,11 @@ def log_image_grid(
         imgs: Image tensor to log (will use first 10 images)
         cfg: Training configuration
         step: Global step for logging
+        rank: Process rank (only rank 0 logs)
     """
+    if rank != 0:
+        return
+
     padding = 0 if "cifar10" in cfg.data.indist_dataset else 2
     image_grid = torchvision.utils.make_grid(
         imgs[:10], nrow=10, padding=padding
@@ -141,6 +218,7 @@ def evaluate_and_log_fid(
     cfg: TrainConfig,
     image_generation_metrics: ImageGenerationMetrics,
     global_step: int,
+    rank: int = 0,
 ) -> None:
     """Evaluate FID and save best model if improved.
 
@@ -149,7 +227,11 @@ def evaluate_and_log_fid(
         cfg: Training configuration
         image_generation_metrics: Metrics tracker for image generation
         global_step: Current global step (1-indexed)
+        rank: Process rank (only rank 0 evaluates and logs)
     """
+    if rank != 0:
+        return
+
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
@@ -179,6 +261,7 @@ def evaluate_and_log_accuracy(
     test_loader_for_eval,
     classification_metrics: ClassificationMetrics,
     global_step: int,
+    rank: int = 0,
 ) -> None:
     """Evaluate classification accuracy and save best model if improved.
 
@@ -188,15 +271,21 @@ def evaluate_and_log_accuracy(
         test_loader_for_eval: Test dataloader
         classification_metrics: Metrics tracker for classification
         global_step: Current global step (1-indexed)
+        rank: Process rank (only rank 0 evaluates and logs)
     """
+    if rank != 0:
+        return
+
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
     LOGGER.info("Evaluating standard accuracy...")
+    # Get device from config's device property (which will use cuda:0 by default)
+    eval_device = cfg.device
     test_acc = eval_acc(
         model=model_to_eval,
         dataloader=test_loader_for_eval,
-        device=cfg.device,
+        device=eval_device,
     )
 
     # Free CUDA memory after accuracy evaluation
@@ -219,7 +308,7 @@ def evaluate_and_log_accuracy(
         robust_test_acc = eval_robust_acc(
             model=model_to_eval,
             dataloader=test_loader_for_eval,
-            device=cfg.device,
+            device=eval_device,
             percentage=100,
             attack_kwargs=attack_kwargs,
         )
@@ -247,15 +336,22 @@ def evaluate_and_log_accuracy(
 
 
 def train(cfg: TrainConfig):
-    np.random.seed(cfg.rand_seed)
-    torch.manual_seed(cfg.rand_seed)
+    # Setup distributed training
+    rank, world_size, device = setup_distributed(cfg)
+
+    # Set seeds (different for each rank for data augmentation diversity)
+    np.random.seed(cfg.rand_seed + rank)
+    torch.manual_seed(cfg.rand_seed + rank)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(cfg.rand_seed + rank)
+
     global_step_one_indexed: int = 0
 
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
 
     # Create all dataloaders
-    dataloaders = create_dataloaders(cfg)
+    dataloaders = create_dataloaders(cfg, rank=rank, world_size=world_size)
     indist_loader_ebm = dataloaders.indist_loader_ebm
     indist_iter_ebm = dataloaders.indist_iter_ebm
     indist_iter_clf = dataloaders.indist_iter_clf
@@ -264,17 +360,21 @@ def train(cfg: TrainConfig):
 
     model = rebm.training.modeling.get_model(
         model_config=cfg.model,
-        device=cfg.device,
+        device=device,
         num_classes=cfg.data.num_classes,
         indist_dataset=cfg.data.indist_dataset,
+        use_ddp=cfg.use_ddp,
+        rank=rank,
     )
     if cfg.use_ema:
+        # EMA model wraps the underlying model (before DDP wrapper)
+        base_model = model.module if cfg.use_ddp else model.module
         ema_model = AveragedModel(
-            model.module,
+            base_model,
             avg_type="ema",
             ema_decay=0.999,
             avg_batchnorm=True,
-            device=cfg.device,
+            device=device,
         )
 
     criterion_ebm = nn.BCEWithLogitsLoss(reduction="mean")
@@ -312,14 +412,15 @@ def train(cfg: TrainConfig):
                 max_epochs_reached = True
                 break
 
-            wandb.log(
-                {
-                    "cur_outdist_steps": cur_outdist_steps,
-                    "indist_epoch": indist_epoch,
-                    "learning_rate": optimizer.param_groups[0]["lr"],
-                },
-                step=n_imgs_seen,
-            )
+            if rank == 0:
+                wandb.log(
+                    {
+                        "cur_outdist_steps": cur_outdist_steps,
+                        "indist_epoch": indist_epoch,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    },
+                    step=n_imgs_seen,
+                )
             is_metric_logging_step = should_trigger_event(
                 global_step_one_indexed=global_step_one_indexed,
                 batch_size=cfg.batch_size,
@@ -345,7 +446,7 @@ def train(cfg: TrainConfig):
                 at_end=True,
             )
 
-            if is_checkpoint_save_step:
+            if is_checkpoint_save_step and rank == 0:
                 model_to_save = (
                     ema_model.module if cfg.use_ema else model.module
                 )
@@ -365,7 +466,11 @@ def train(cfg: TrainConfig):
                     cfg,
                     image_generation_metrics,
                     global_step_one_indexed,
+                    rank=rank,
                 )
+                # Synchronize all ranks after FID evaluation (which can take 10+ minutes on rank 0)
+                if cfg.use_ddp:
+                    dist.barrier()
 
             if is_evaluation_step and cfg.data.num_classes > 1:
                 model.eval()
@@ -379,15 +484,19 @@ def train(cfg: TrainConfig):
                     test_loader,
                     classification_metrics,
                     global_step_one_indexed,
+                    rank=rank,
                 )
+                # Synchronize all ranks after accuracy evaluation
+                if cfg.use_ddp:
+                    dist.barrier()
 
-            outdist_imgs = next(outdist_iter)[0].to(cfg.device)
-            indist_imgs_ebm = train_indist_batch[0].to(cfg.device)
+            outdist_imgs = next(outdist_iter)[0].to(device)
+            indist_imgs_ebm = train_indist_batch[0].to(device)
             indist_labels_ebm = train_indist_batch[1]
 
             indist_imgs_clf, indist_labels_clf = next(indist_iter_clf)
-            indist_imgs_clf = indist_imgs_clf.to(cfg.device)
-            indist_labels_clf = indist_labels_clf.to(cfg.device)
+            indist_imgs_clf = indist_imgs_clf.to(device)
+            indist_labels_clf = indist_labels_clf.to(device)
 
             optimizer.zero_grad()
 
@@ -414,14 +523,22 @@ def train(cfg: TrainConfig):
             total_loss.backward()
             optimizer.step()
 
-            train_adv_auc_deque.append(ebm_metrics.adv_auc)
-            train_clean_auc_deque.append(ebm_metrics.clean_auc)
+            # Aggregate AUC metrics across all ranks
+            if cfg.use_ddp:
+                adv_auc = average_metric_across_ranks(ebm_metrics.adv_auc, device, world_size)
+                clean_auc = average_metric_across_ranks(ebm_metrics.clean_auc, device, world_size)
+            else:
+                adv_auc = ebm_metrics.adv_auc
+                clean_auc = ebm_metrics.clean_auc
+
+            train_adv_auc_deque.append(adv_auc)
+            train_clean_auc_deque.append(clean_auc)
 
             if cfg.use_ema:
                 with torch.no_grad():
                     ema_model.update_parameters(model.module)
 
-            if global_step_one_indexed % 20 == 0:
+            if global_step_one_indexed % 20 == 0 and rank == 0:
                 ebm_metrics_dict = ebm_metrics.to_simple_dict()
                 metrics_str = ", ".join(
                     [
@@ -437,7 +554,7 @@ def train(cfg: TrainConfig):
                     f"{metrics_str}"
                 )
 
-            if is_metric_logging_step:
+            if is_metric_logging_step and rank == 0:
                 wandb.log(
                     dict_append_label(ebm_metrics.to_simple_dict(), "train_"),
                     step=n_imgs_seen,
@@ -452,7 +569,10 @@ def train(cfg: TrainConfig):
                     ("train_adv_imgs", ebm_metrics.adv_imgs),
                     ("train_gen_imgs", image_generation_metrics.gen_imgs),
                 ]:
-                    log_image_grid(label, imgs, cfg, n_imgs_seen)
+                    log_image_grid(label, imgs, cfg, n_imgs_seen, rank=rank)
+                # Synchronize all ranks after image logging (can take 30+ minutes on rank 0)
+                if cfg.use_ddp:
+                    dist.barrier()
 
             if (
                 cur_outdist_steps < cfg.attack.max_steps
@@ -488,9 +608,18 @@ if __name__ == "__main__":
             "\nUsage: python -m rebm.training.train CONFIG_FILE [KEY=VALUE ...]"
         )
         print("\nExamples:")
-        print("  python -m rebm.training.train experiments/cifar10/config.yaml")
+        print("  # Single GPU (DataParallel)")
+        print("  python -m rebm.training.train experiments/cifar10/config.yaml use_ddp=False")
         print(
             "  python -m rebm.training.train experiments/cifar10/config.yaml batch_size=256 lr=0.001"
+        )
+        print("\n  # Multi-GPU (DDP with torchrun)")
+        print("  torchrun --nproc_per_node=4 -m rebm.training.train experiments/cifar10/config.yaml")
+        print(
+            "  torchrun --nproc_per_node=2 -m rebm.training.train experiments/cifar10/config.yaml batch_size=64"
+        )
+        print(
+            "\n  # Other examples"
         )
         print(
             "  python -m rebm.training.train experiments/cifar10/config.yaml model.ckpt_path=/path/to/model.pth"
@@ -509,17 +638,37 @@ if __name__ == "__main__":
     # We just save them on disk for now.
     os.environ["WANDB_IGNORE_GLOBS"] = "*.pth"
 
-    run_name = os.environ.get("WANDB_NAME", Path(config_file).stem)
-    wandb.init(
-        project=cfg.wandb_project,
-        tags=cfg.tags,
-        dir=cfg.wandb_dir,
-        save_code=True,
-        mode="disabled" if cfg.wandb_disabled else "online",
-        name=run_name,
-        config=dataclasses.asdict(cfg),
+    # Initialize wandb only on rank 0 to avoid multiple runs
+    # When using DDP, setup_distributed() will be called in train()
+    # For now, check if we're in a distributed environment
+    is_distributed = cfg.use_ddp and (
+        "RANK" in os.environ or "LOCAL_RANK" in os.environ
     )
-    LOGGER.info(f"Using device: {cfg.device}")
+
+    if is_distributed:
+        # In DDP mode with torchrun, only init wandb on rank 0
+        # We need to initialize the process group first to get the rank
+        if not dist.is_initialized():
+            # Set a longer timeout for operations like FID evaluation and image logging
+            # which can take 60+ minutes with step sweeping
+            timeout = timedelta(minutes=90)
+            dist.init_process_group(backend=cfg.ddp_backend, timeout=timeout)
+        rank = dist.get_rank()
+    else:
+        # Single GPU or DataParallel mode
+        rank = 0
+
+    if rank == 0:
+        run_name = os.environ.get("WANDB_NAME", Path(config_file).stem)
+        wandb.init(
+            project=cfg.wandb_project,
+            tags=cfg.tags,
+            dir=cfg.wandb_dir,
+            save_code=True,
+            mode="disabled" if cfg.wandb_disabled else "online",
+            name=run_name,
+            config=dataclasses.asdict(cfg),
+        )
 
     torch.backends.cudnn.benchmark = True
 
