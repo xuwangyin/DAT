@@ -152,11 +152,13 @@ def get_available_partition() -> str:
 def get_partition_time_limit(partition: str) -> str:
     """Get the maximum time limit for a SLURM partition."""
     time_limits = {
-        "mi3008x": "24:00:00",
-        "mi3258x": "12:00:00",
-        "mi2508x": "48:00:00",
+        "mi3008x": "4:00:00",
+        "mi3258x": "4:00:00",
+        "mi2508x": "12:00:00",
         "mi2104x": "24:00:00",
-        "devel": "2:00:00",
-        "mi2101x": "48:00:00",
+        "devel": "0:30:00",
+        "mi2101x": "12:00:00",
+        "mi3001x": "4:00:00",
+        "mi3008x_long": "8:00:00",
     }
     return time_limits.get(partition, "24:00:00")
