@@ -1,12 +1,14 @@
 """Data management for training - handles dataset and dataloader creation."""
 
 import logging
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
+import torch.distributed as dist
 import torch.utils.data
 import torchvision.datasets
 import torchvision.transforms as transforms
+from torch.utils.data.distributed import DistributedSampler
 
 import InNOutRobustness.utils.datasets as dl
 from InNOutRobustness.utils.datasets.augmentations.cifar_augmentation import (
@@ -239,15 +241,31 @@ def get_indist_dataloader(
     shuffle: bool = True,
     augm_type: str = "autoaugment_cutout",
     balanced: bool = True,
+    use_ddp: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
 ):
-    """Get in-distribution dataloader."""
+    """Get in-distribution dataloader with optional DDP support."""
     dataset = get_indist_dataset(
         config, split=split, attack=attack, augm_type=augm_type
     )
+
+    # Setup sampler for DDP
+    sampler = None
+    if use_ddp:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=shuffle,
+        )
+        shuffle = False  # Sampler handles shuffling
+
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
+        sampler=sampler,
         drop_last=True,
         pin_memory=True,
         num_workers=config.num_workers,
@@ -334,8 +352,11 @@ def get_outdist_dataloader(
     tinyimages_loader: str = "innout",
     openimages_max_samples: int | None = None,
     openimages_augm: str | None = None,
+    use_ddp: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
 ):
-    """Get out-distribution dataloader."""
+    """Get out-distribution dataloader with optional DDP support."""
     outdist_dataset = get_outdist_dataset(
         config=config,
         split=split,
@@ -344,10 +365,23 @@ def get_outdist_dataloader(
         openimages_max_samples=openimages_max_samples,
         openimages_augm=openimages_augm,
     )
+
+    # Setup sampler for DDP
+    sampler = None
+    if use_ddp:
+        sampler = DistributedSampler(
+            outdist_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=shuffle,
+        )
+        shuffle = False  # Sampler handles shuffling
+
     return torch.utils.data.DataLoader(
         outdist_dataset,
         batch_size=batch_size,
         shuffle=shuffle,
+        sampler=sampler,
         drop_last=True,
         pin_memory=True,
         num_workers=config.num_workers,

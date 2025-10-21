@@ -180,6 +180,10 @@ class TrainConfig:
 
     total_epochs: int | None = None
 
+    # Distributed Data Parallel parameters
+    use_ddp: bool = True  # Enable DistributedDataParallel training
+    ddp_backend: str = "nccl"  # Backend for distributed training (nccl, gloo, mpi)
+
     @property
     def dtype(self) -> torch.dtype:
         return torch.float16 if self.fp16 else torch.float32

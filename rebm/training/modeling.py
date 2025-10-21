@@ -9,7 +9,9 @@ from collections import OrderedDict
 sys.path.insert(0, "pytorch-image-models")
 
 import torch
+import torch.distributed as dist
 import wandb
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # TODO: Fix import order issue with timm
 # utils_architecture.py imports timm without sys.path.insert, which causes
@@ -48,15 +50,15 @@ def load_checkpoint(
             new_state_dict[name] = v
         state_dict = new_state_dict
 
-    # Check if the state_dict has 'module.' prefix (saved from DataParallel)
-    # but the current model is not a DataParallel model
-    is_state_dict_data_parallel = any(
+    # Check if the state_dict has 'module.' prefix (saved from DataParallel/DDP)
+    # but the current model is not wrapped
+    is_state_dict_wrapped = any(
         k.startswith("module.") for k in state_dict.keys()
     )
-    is_model_data_parallel = isinstance(model, nn.DataParallel)
+    is_model_wrapped = isinstance(model, (nn.DataParallel, DDP))
 
-    if is_state_dict_data_parallel and not is_model_data_parallel:
-        # Remove 'module.' prefix for loading into non-DataParallel model
+    if is_state_dict_wrapped and not is_model_wrapped:
+        # Remove 'module.' prefix for loading into non-wrapped model
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
             name = (
@@ -64,8 +66,8 @@ def load_checkpoint(
             )  # remove 'module.' prefix
             new_state_dict[name] = v
         state_dict = new_state_dict
-    elif not is_state_dict_data_parallel and is_model_data_parallel:
-        # Add 'module.' prefix for loading into DataParallel model
+    elif not is_state_dict_wrapped and is_model_wrapped:
+        # Add 'module.' prefix for loading into wrapped model
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
             name = f"module.{k}" if not k.startswith("module.") else k
@@ -79,9 +81,11 @@ def load_checkpoint(
 
 def get_model(
     model_config: BaseModelConfig,
-    device: str,
+    device: torch.device,
     num_classes: int,
     indist_dataset: str,
+    use_ddp: bool = False,
+    rank: int = 0,
 ) -> nn.Module:
     """Create and initialize a model based on configuration.
 
@@ -90,9 +94,11 @@ def get_model(
         device: Device to place model on
         num_classes: Number of output classes
         indist_dataset: Name of in-distribution dataset for normalization
+        use_ddp: Whether to use DistributedDataParallel
+        rank: Rank for DDP
 
     Returns:
-        Initialized model (wrapped in DataParallel)
+        Initialized model (wrapped in DataParallel or DDP)
     """
     model_type = model_config.model_type
 
@@ -109,7 +115,13 @@ def get_model(
             use_batchnorm=model_config.use_batchnorm,
         ).to(device)
 
-        model = nn.DataParallel(model)
+        # Wrap model with DDP or DataParallel
+        if use_ddp:
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
+        else:
+            model = nn.DataParallel(model)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
@@ -132,7 +144,13 @@ def get_model(
         # if model_config.use_convstem:
         #     model = replace_convstem(model, model_type)
 
-        model = nn.DataParallel(model)
+        # Wrap model with DDP or DataParallel
+        if use_ddp:
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
+        else:
+            model = nn.DataParallel(model)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
@@ -153,7 +171,13 @@ def get_model(
             use_batchnorm=model_config.use_batchnorm,
         ).to(device)
 
-        model = nn.DataParallel(model)
+        # Wrap model with DDP or DataParallel
+        if use_ddp:
+            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
+            # "modified by an inplace operation" errors in autograd
+            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
+        else:
+            model = nn.DataParallel(model)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:

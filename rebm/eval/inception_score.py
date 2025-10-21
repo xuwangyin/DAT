@@ -66,14 +66,16 @@ def compute_inception_score(image_dir, batch_size=64, splits=10, device=None):
         dataset, batch_size=batch_size, shuffle=False, num_workers=4
     )
 
-    # Initialize metric
-    metric = InceptionScore(splits=splits).to(device)
+    # Initialize metric with sync_on_compute=False to avoid DDP synchronization issues
+    # Only rank 0 runs this code, so no need for distributed aggregation
+    metric = InceptionScore(splits=splits, sync_on_compute=False).to(device)
 
-    # Compute score
+    # Compute score (inference on GPU)
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Computing Inception Score"):
             batch = batch.to(device)
             metric.update(batch)
 
+    # Compute final score (no DDP sync due to sync_on_compute=False)
     score = metric.compute()
     return score[0].item(), score[1].item()

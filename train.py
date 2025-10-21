@@ -5,6 +5,8 @@ Reads configuration files and launches training using the train_cmd field.
 """
 
 import argparse
+import os
+import re
 import shlex
 import subprocess
 import sys
