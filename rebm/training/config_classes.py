@@ -181,7 +181,7 @@ class TrainConfig:
     total_epochs: int | None = None
 
     # Distributed Data Parallel parameters
-    use_ddp: bool = True  # Enable DistributedDataParallel training
+    use_ddp: bool = False  # Enable DistributedDataParallel training
     ddp_backend: str = "nccl"  # Backend for distributed training (nccl, gloo, mpi)
 
     @property

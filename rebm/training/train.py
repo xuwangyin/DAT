@@ -656,13 +656,8 @@ if __name__ == "__main__":
     os.environ["WANDB_IGNORE_GLOBS"] = "*.pth"
 
     # Initialize wandb only on rank 0 to avoid multiple runs
-    # When using DDP, setup_distributed() will be called in train()
-    # For now, check if we're in a distributed environment
-    is_distributed = cfg.use_ddp and (
-        "RANK" in os.environ or "LOCAL_RANK" in os.environ
-    )
-
-    if is_distributed:
+    # When using DDP, we need to initialize the process group first
+    if cfg.use_ddp:
         # In DDP mode with torchrun, only init wandb on rank 0
         # We need to initialize the process group first to get the rank
         if not dist.is_initialized():
