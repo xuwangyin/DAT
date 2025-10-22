@@ -72,7 +72,6 @@ min_imgs_per_threshold: 1000
 n_imgs_per_metrics_log: 50000
 n_imgs_per_image_log: 5000000
 n_imgs_per_evaluation_log: 50000
-n_imgs_per_ckpt_save: 1000000
 wandb_project: "DAT"
 wandb_disabled: false
 tags: ['cifar10']

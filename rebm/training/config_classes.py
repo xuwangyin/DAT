@@ -138,7 +138,6 @@ class TrainConfig:
     # Logging
     n_imgs_per_metrics_log: int
     n_imgs_per_image_log: int
-    n_imgs_per_ckpt_save: int
 
     # WandB
     wandb_project: str
@@ -183,6 +182,9 @@ class TrainConfig:
     # Distributed Data Parallel parameters
     use_ddp: bool = False  # Enable DistributedDataParallel training
     ddp_backend: str = "nccl"  # Backend for distributed training (nccl, gloo, mpi)
+
+    # Training resumption
+    resume_from_state: str | None = None  # Path to saved training state to resume from
 
     @property
     def dtype(self) -> torch.dtype:

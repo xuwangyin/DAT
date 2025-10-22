@@ -1,9 +1,12 @@
 """Model creation, loading, and checkpoint management."""
 
+import dataclasses
 import logging
 import os
 import sys
 from collections import OrderedDict
+from pathlib import Path
+from typing import Optional
 
 # Add pytorch-image-models to path for timm imports
 sys.path.insert(0, "pytorch-image-models")
@@ -28,7 +31,9 @@ from torch import nn
 
 import rebm.models.wide_resnet_innoutrobustness
 import rebm.training.misc
-from rebm.training.config_classes import BaseModelConfig
+from rebm.training.average_model import AveragedModel
+from rebm.training.config_classes import BaseModelConfig, TrainConfig
+from rebm.training.metrics import ClassificationMetrics, ImageGenerationMetrics
 
 LOGGER = logging.getLogger(__name__)
 
@@ -242,12 +247,15 @@ def get_optimizer(
 def save_checkpoint(
     model: nn.Module, optimizer: torch.optim.Optimizer, step: int
 ):
-    """Save model and optimizer checkpoint.
+    """Save model and optimizer checkpoint (legacy format).
 
     Args:
         model: Model to save
         optimizer: Optimizer to save
         step: Current training step
+
+    Note: This saves model and optimizer separately. For full training resumption,
+    use save_training_state() instead.
     """
     rebm.training.misc.save_model(
         model, os.path.join(wandb.run.dir, f"model_{step}.pth")
@@ -255,6 +263,121 @@ def save_checkpoint(
     rebm.training.misc.save_model(
         optimizer, os.path.join(wandb.run.dir, f"optimizer_{step}.pth")
     )
+
+
+def save_training_state(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    global_step: int,
+    cur_outdist_steps: int,
+    image_generation_metrics: ImageGenerationMetrics,
+    classification_metrics: ClassificationMetrics,
+    cfg: TrainConfig,
+    ema_model: Optional[AveragedModel] = None,
+    wandb_run_id: Optional[str] = None,
+) -> str:
+    """Save complete training state to checkpoint for resumption.
+
+    Args:
+        model: Model to save (can be wrapped in DDP/DataParallel)
+        optimizer: Optimizer to save
+        global_step: Current global step (1-indexed)
+        cur_outdist_steps: Current out-distribution attack steps
+        image_generation_metrics: Image generation metrics tracker
+        classification_metrics: Classification metrics tracker
+        cfg: Training configuration
+        ema_model: EMA model (if using EMA)
+        wandb_run_id: Wandb run ID for resumption
+
+    Returns:
+        Path to saved state file
+    """
+    state = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'training_state': {
+            'global_step': global_step,
+            'cur_outdist_steps': cur_outdist_steps,
+        },
+        'metrics': {
+            'image_generation_metrics': dataclasses.asdict(image_generation_metrics),
+            'classification_metrics': dataclasses.asdict(classification_metrics),
+        },
+        'config': dataclasses.asdict(cfg),
+        'wandb_run_id': wandb_run_id,
+    }
+
+    # Save EMA model state if using EMA
+    if ema_model is not None:
+        state['ema_state_dict'] = ema_model.state_dict()
+
+    # Save state (overwrites previous)
+    save_path = os.path.join(wandb.run.dir, "training_state_latest.pth")
+    Path(os.path.dirname(save_path)).mkdir(parents=True, exist_ok=True)
+    torch.save(state, save_path)
+
+    LOGGER.info(f"Saved training state to {save_path}")
+    return save_path
+
+
+def load_training_state(
+    state_path: str,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    ema_model: Optional[AveragedModel] = None,
+) -> dict:
+    """Load complete training state and restore.
+
+    Args:
+        state_path: Path to training state file
+        model: Model to load state into (can be wrapped in DDP/DataParallel)
+        optimizer: Optimizer to load state into
+        device: Device for loading
+        ema_model: EMA model to load state into (if using EMA)
+
+    Returns:
+        Dictionary containing training state:
+            - global_step: Current global step
+            - cur_outdist_steps: Current out-distribution attack steps
+            - metrics: Dict with image_generation_metrics and classification_metrics
+            - config: Training configuration from saved state
+            - wandb_run_id: Wandb run ID (if available)
+    """
+    LOGGER.info(f"Loading training state from {state_path}")
+
+    state = torch.load(state_path, map_location=device, weights_only=False)
+
+    # Load model state
+    model.load_state_dict(state['model_state_dict'])
+    LOGGER.info("Loaded model state")
+
+    # Load optimizer state
+    optimizer.load_state_dict(state['optimizer_state_dict'])
+    LOGGER.info("Loaded optimizer state")
+
+    # Load EMA model state if available
+    if ema_model is not None and 'ema_state_dict' in state:
+        ema_model.load_state_dict(state['ema_state_dict'])
+        LOGGER.info("Loaded EMA model state")
+    elif ema_model is not None and 'ema_state_dict' not in state:
+        LOGGER.warning(
+            "EMA model requested but no EMA state found in saved state. "
+            "EMA model will start from current model weights."
+        )
+
+    # Extract training state
+    training_state = state['training_state']
+    training_state['metrics'] = state.get('metrics', {})
+    training_state['config'] = state.get('config', {})
+    training_state['wandb_run_id'] = state.get('wandb_run_id', None)
+
+    LOGGER.info(
+        f"Resumed from step {training_state['global_step']}, "
+        f"outdist_steps {training_state['cur_outdist_steps']}"
+    )
+
+    return training_state
 
 
 def save_best_fid_model(model: nn.Module):

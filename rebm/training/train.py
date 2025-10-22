@@ -340,7 +340,9 @@ def train(cfg: TrainConfig):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(cfg.rand_seed + rank)
 
+    # Initialize training state (may be overridden by resume)
     global_step_one_indexed: int = 0
+    start_outdist_steps: int = cfg.attack.start_step
 
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
@@ -381,11 +383,51 @@ def train(cfg: TrainConfig):
         wd=cfg.wd,
     )
 
-    indist_epoch = 0
+    # Resume from saved state if specified
+    if cfg.resume_from_state:
+        if rank == 0:
+            LOGGER.info(f"Resuming training from {cfg.resume_from_state}")
+        training_state = rebm.training.modeling.load_training_state(
+            state_path=cfg.resume_from_state,
+            model=model,
+            optimizer=optimizer,
+            device=device,
+            ema_model=ema_model if cfg.use_ema else None,
+        )
+        # Restore training state
+        global_step_one_indexed = training_state['global_step']
+        start_outdist_steps = training_state['cur_outdist_steps']
+
+        # Restore metrics
+        metrics_dict = training_state['metrics']
+        image_generation_metrics = ImageGenerationMetrics(
+            **metrics_dict['image_generation_metrics']
+        )
+        classification_metrics = ClassificationMetrics(
+            **metrics_dict['classification_metrics']
+        )
+
+        # Skip batches to resume at correct position in dataloader
+        # Since random seed is fixed, dataloader will have same shuffle order
+        batches_to_skip = global_step_one_indexed
+        if rank == 0:
+            LOGGER.info(f"Skipping {batches_to_skip} batches to resume at correct position...")
+        for _ in range(batches_to_skip):
+            next(indist_iter_ebm)
+            next(indist_iter_clf)
+            next(outdist_iter)
+
+        if rank == 0:
+            LOGGER.info(
+                f"Resumed from step {global_step_one_indexed}, "
+                f"outdist_steps {start_outdist_steps}"
+            )
+
     max_epochs_reached = False
     for cur_outdist_steps in range(
-        cfg.attack.start_step, cfg.attack.max_steps + 1
+        start_outdist_steps, cfg.attack.max_steps + 1
     ):
+        # Initialize AUC deques
         train_adv_auc_deque = collections.deque(
             maxlen=math.ceil(cfg.min_imgs_per_threshold / cfg.batch_size)
         )
@@ -430,24 +472,8 @@ def train(cfg: TrainConfig):
                     interval_in_imgs=cfg.n_imgs_per_evaluation_log,
                 )
             )
-            is_checkpoint_save_step = should_trigger_event(
-                global_step_one_indexed=global_step_one_indexed,
-                batch_size=cfg.batch_size,
-                interval_in_imgs=cfg.n_imgs_per_ckpt_save,
-                at_end=True,
-            )
 
-            if is_checkpoint_save_step and rank == 0:
-                model_to_save = (
-                    ema_model.module if cfg.use_ema else model.module
-                )
-                rebm.training.modeling.save_checkpoint(
-                    model=model_to_save,
-                    optimizer=optimizer,
-                    step=global_step_one_indexed,
-                )
-
-            if is_evaluation_step:
+            if is_evaluation_step and rank == 0:
                 model.zero_grad()
                 # In DDP mode, wrap model with DataParallel using all available GPUs
                 # This gives ~8x speedup for FID evaluation vs single GPU
@@ -501,6 +527,20 @@ def train(cfg: TrainConfig):
                 # Synchronize all ranks after accuracy evaluation
                 if cfg.use_ddp:
                     dist.barrier()
+
+            # Save training state after evaluation
+            if is_evaluation_step and rank == 0:
+                rebm.training.modeling.save_training_state(
+                    model=model,
+                    optimizer=optimizer,
+                    global_step=global_step_one_indexed,
+                    cur_outdist_steps=cur_outdist_steps,
+                    image_generation_metrics=image_generation_metrics,
+                    classification_metrics=classification_metrics,
+                    cfg=cfg,
+                    ema_model=ema_model if cfg.use_ema else None,
+                    wandb_run_id=wandb.run.id if wandb.run else None,
+                )
 
             outdist_imgs = next(outdist_iter)[0].to(device)
             indist_imgs_ebm = train_indist_batch[0].to(device)
@@ -672,15 +712,34 @@ if __name__ == "__main__":
 
     if rank == 0:
         run_name = os.environ.get("WANDB_NAME", Path(config_file).stem)
-        wandb.init(
-            project=cfg.wandb_project,
-            tags=cfg.tags,
-            dir=cfg.wandb_dir,
-            save_code=True,
-            mode="disabled" if cfg.wandb_disabled else "online",
-            name=run_name,
-            config=dataclasses.asdict(cfg),
-        )
+
+        # Load wandb run ID from saved state if resuming
+        resume_wandb_id = None
+        if cfg.resume_from_state:
+            state = torch.load(cfg.resume_from_state, map_location='cpu', weights_only=False)
+            resume_wandb_id = state['wandb_run_id']
+            if resume_wandb_id:
+                LOGGER.info(f"Resuming wandb run: {resume_wandb_id}")
+
+        # Initialize wandb
+        wandb_init_kwargs = {
+            'project': cfg.wandb_project,
+            'tags': cfg.tags,
+            'dir': cfg.wandb_dir,
+            'save_code': True,
+            'mode': "disabled" if cfg.wandb_disabled else "online",
+            'config': dataclasses.asdict(cfg),
+        }
+
+        # Resume existing run if available
+        if resume_wandb_id:
+            wandb_init_kwargs['id'] = resume_wandb_id
+            wandb_init_kwargs['resume'] = 'must'
+            # Don't set name when resuming - wandb keeps the original run name
+        else:
+            wandb_init_kwargs['name'] = run_name
+
+        wandb.init(**wandb_init_kwargs)
 
     torch.backends.cudnn.benchmark = True
 
