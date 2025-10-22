@@ -27,6 +27,7 @@ from rebm.eval.eval_utils import (
     eval_acc,
     eval_robust_acc,
     evaluate_image_generation,
+    log_generate_images,
 )
 from rebm.training.average_model import AveragedModel
 from rebm.training.config_classes import TrainConfig, load_train_config
@@ -192,7 +193,7 @@ def create_dataloaders(cfg: TrainConfig, rank: int = 0, world_size: int = 1) -> 
 
 
 def log_image_grid(
-    label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int, rank: int = 0
+    label: str, imgs: torch.Tensor, cfg: TrainConfig, step: int
 ) -> None:
     """Log image grid to wandb.
 
@@ -201,11 +202,9 @@ def log_image_grid(
         imgs: Image tensor to log (will use first 10 images)
         cfg: Training configuration
         step: Global step for logging
-        rank: Process rank (only rank 0 logs)
-    """
-    if rank != 0:
-        return
 
+    Note: Should only be called on rank 0 in DDP mode.
+    """
     padding = 0 if "cifar10" in cfg.data.indist_dataset else 2
     image_grid = torchvision.utils.make_grid(
         imgs[:10], nrow=10, padding=padding
@@ -218,27 +217,25 @@ def evaluate_and_log_fid(
     cfg: TrainConfig,
     image_generation_metrics: ImageGenerationMetrics,
     global_step: int,
-    rank: int = 0,
 ) -> None:
     """Evaluate FID and save best model if improved.
+
+    Note: Should only be called on rank 0 in DDP mode.
 
     Args:
         model_to_eval: Model to evaluate (EMA or training model)
         cfg: Training configuration
         image_generation_metrics: Metrics tracker for image generation
         global_step: Current global step (1-indexed)
-        rank: Process rank (only rank 0 evaluates and logs)
     """
-    if rank != 0:
-        return
 
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
-    fid, gen_imgs = evaluate_image_generation(model_to_eval, cfg)
+    fid = evaluate_image_generation(model_to_eval, cfg)
     LOGGER.info(f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}")
 
-    is_new_best = image_generation_metrics.update(fid, gen_imgs)
+    is_new_best = image_generation_metrics.update(fid)
     if is_new_best:
         model_to_save = (
             model_to_eval.module.module if cfg.use_ema else model_to_eval.module
@@ -261,9 +258,10 @@ def evaluate_and_log_accuracy(
     test_loader_for_eval,
     classification_metrics: ClassificationMetrics,
     global_step: int,
-    rank: int = 0,
 ) -> None:
     """Evaluate classification accuracy and save best model if improved.
+
+    Note: Should only be called on rank 0 in DDP mode.
 
     Args:
         model_to_eval: Model to evaluate (EMA or training model)
@@ -271,10 +269,7 @@ def evaluate_and_log_accuracy(
         test_loader_for_eval: Test dataloader
         classification_metrics: Metrics tracker for classification
         global_step: Current global step (1-indexed)
-        rank: Process rank (only rank 0 evaluates and logs)
     """
-    if rank != 0:
-        return
 
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
@@ -427,11 +422,6 @@ def train(cfg: TrainConfig):
                 batch_size=cfg.batch_size,
                 interval_in_imgs=cfg.n_imgs_per_metrics_log,
             )
-            is_image_logging_step = should_trigger_event(
-                global_step_one_indexed=global_step_one_indexed,
-                batch_size=cfg.batch_size,
-                interval_in_imgs=cfg.n_imgs_per_image_log,
-            )
             is_evaluation_step = (
                 cfg.n_imgs_per_evaluation_log is not None
                 and should_trigger_event(
@@ -474,13 +464,21 @@ def train(cfg: TrainConfig):
                     cfg,
                     image_generation_metrics,
                     global_step_one_indexed,
-                    rank=rank,
                 )
-                # Synchronize all ranks after FID evaluation (which can take 10+ minutes on rank 0)
+
+                # Generate and log sample images
+                gen_imgs = log_generate_images(
+                    cfg=cfg,
+                    model=model_to_eval,
+                    samples=10,
+                )
+                log_image_grid("train_gen_imgs", gen_imgs, cfg, n_imgs_seen)
+
+                # Synchronize all ranks after FID evaluation and image logging
                 if cfg.use_ddp:
                     dist.barrier()
 
-            if is_evaluation_step and cfg.data.num_classes > 1:
+            if is_evaluation_step and cfg.data.num_classes > 1 and rank == 0:
                 model.eval()
                 model.zero_grad()
                 # In DDP mode, wrap model with DataParallel using all available GPUs
@@ -499,7 +497,6 @@ def train(cfg: TrainConfig):
                     test_loader,
                     classification_metrics,
                     global_step_one_indexed,
-                    rank=rank,
                 )
                 # Synchronize all ranks after accuracy evaluation
                 if cfg.use_ddp:
@@ -575,19 +572,22 @@ def train(cfg: TrainConfig):
                     step=n_imgs_seen,
                 )
 
-            if is_image_logging_step:
+            is_image_logging_step = should_trigger_event(
+                global_step_one_indexed=global_step_one_indexed,
+                batch_size=cfg.batch_size,
+                interval_in_imgs=cfg.n_imgs_per_image_log,
+            )
+
+            if is_image_logging_step and rank == 0:
+                # Log training images
                 for label, imgs in [
                     ("train_indist_imgs_clf", indist_imgs_clf),
                     ("train_indist_imgs", ebm_metrics.indist_imgs),
                     ("train_outdist_imgs", ebm_metrics.outdist_imgs_clean),
                     ("train_error_imgs", ebm_metrics.outdist_imgs_error),
                     ("train_adv_imgs", ebm_metrics.adv_imgs),
-                    ("train_gen_imgs", image_generation_metrics.gen_imgs),
                 ]:
-                    log_image_grid(label, imgs, cfg, n_imgs_seen, rank=rank)
-                # Synchronize all ranks after image logging (can take 30+ minutes on rank 0)
-                if cfg.use_ddp:
-                    dist.barrier()
+                    log_image_grid(label, imgs, cfg, n_imgs_seen)
 
             if (
                 cur_outdist_steps < cfg.attack.max_steps

@@ -75,15 +75,21 @@ class TrainingMetrics:
 
 @dataclasses.dataclass
 class ImageGenerationMetrics:
-    """Class to track image generation metrics including FID scores and generated images."""
+    """Class to track image generation metrics (FID scores)."""
 
     fid: float | None = None
-    gen_imgs: torch.Tensor | None = None
     best_fid: float = float("inf")
 
-    def update(self, fid: float | None, gen_imgs: torch.Tensor | None) -> bool:
+    def update(self, fid: float | None) -> bool:
+        """Update FID metrics and check if new best.
+
+        Args:
+            fid: Current FID score
+
+        Returns:
+            True if this is a new best FID
+        """
         self.fid = fid
-        self.gen_imgs = gen_imgs
 
         # Check if we have a new best FID
         new_best = False

@@ -142,10 +142,13 @@ def log_generate_images(
 
 def evaluate_image_generation(
     model: nn.Module, cfg
-) -> tuple[float | None, torch.Tensor | None]:
-    """Compute FID (if enabled) and sample images for logging."""
+) -> float | None:
+    """Compute FID score for generated images.
+
+    Note: This only computes FID. For logging sample images, use log_generate_images()
+    directly in the training loop.
+    """
     assert_no_grad(model)
-    fid, gen_imgs = None, None
     model.eval()
 
     if cfg.image_log.log_fid:
@@ -165,13 +168,9 @@ def evaluate_image_generation(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    gen_imgs = log_generate_images(
-        cfg=cfg,
-        model=model,
-        samples=10,
-    )
+        return fid
 
-    return fid, gen_imgs
+    return None
 
 
 def find_optimal_steps(cfg, model: nn.Module) -> int:
