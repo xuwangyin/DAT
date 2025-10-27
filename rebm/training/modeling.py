@@ -16,18 +16,15 @@ import torch.distributed as dist
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-# TODO: Fix import order issue with timm
-# utils_architecture.py imports timm without sys.path.insert, which causes
-# system timm (v1.0.15) to be cached in sys.modules before our local
-# pytorch-image-models timm can be loaded. This breaks imports like
-# wide_resnet50_4 which don't exist in system timm.
-# Workaround: Commented out until utils_architecture.py adds sys.path.insert
-# from rebm.training.utils_architecture import replace_convstem
 # Import model classes that need to be available globally
 from timm.models.resnet import resnet50 as ResNet50ImageNet
 from timm.models.resnet import wide_resnet50_2 as WideResNet50x2ImageNet
 from timm.models.resnet import wide_resnet50_4 as WideResNet50x4ImageNet
+from timm.models.convnext import convnext_small, convnext_base, convnext_tiny, convnext_large
 from torch import nn
+
+# Import ConvBlocks for convstem replacement
+from rebm.training.utils_architecture import ConvBlock1, ConvBlock3, ConvBlockLarge
 
 import rebm.models.wide_resnet_innoutrobustness
 import rebm.training.misc
@@ -45,6 +42,15 @@ def load_checkpoint(
     state_dict = torch.load(
         ckpt_path, weights_only=weights_only, map_location="cpu"
     )
+
+    # Handle base_model. prefix (used in some ConvNeXt checkpoints)
+    if any(k.startswith("base_model.") for k in state_dict.keys()):
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k[11:] if k.startswith("base_model.") else k  # remove 'base_model.' prefix
+            new_state_dict[name] = v
+        state_dict = new_state_dict
+        LOGGER.info("Removed 'base_model.' prefix from checkpoint keys")
 
     # EMA model
     if any(k.startswith("module.n_averaged") for k in state_dict.keys()):
@@ -136,18 +142,54 @@ def get_model(
 
     # ConvNeXt models from timm
     elif model_type.startswith("convnext_"):
-        model_class = locals().get(model_type)
+        # Get the model creation function
+        if model_type == "convnext_small":
+            model = convnext_small(
+                pretrained=False,
+                num_classes=num_classes,
+                normalize_input=model_config.normalize_input,
+                use_layernorm=model_config.use_layernorm,
+            )
+        elif model_type == "convnext_tiny":
+            model = convnext_tiny(
+                pretrained=False,
+                num_classes=num_classes,
+                normalize_input=model_config.normalize_input,
+                use_layernorm=model_config.use_layernorm,
+            )
+        elif model_type == "convnext_base":
+            model = convnext_base(
+                pretrained=False,
+                num_classes=num_classes,
+                normalize_input=model_config.normalize_input,
+                use_layernorm=model_config.use_layernorm,
+            )
+        elif model_type == "convnext_large":
+            model = convnext_large(
+                pretrained=False,
+                num_classes=num_classes,
+                normalize_input=model_config.normalize_input,
+                use_layernorm=model_config.use_layernorm,
+            )
+        else:
+            raise ValueError(f"Unsupported ConvNeXt model type: {model_type}")
 
-        # Instantiate the model with custom parameters
-        model = model_class(
-            num_classes=num_classes,
-            normalize_input=model_config.normalize_input,
-            use_layernorm=model_config.use_layernorm,
-        ).to(device)
+        # Replace patch stem with convstem if specified (ConvNextConfig has use_convstem=True by default)
+        if model_config.use_convstem:
+            LOGGER.info(f"Replacing patch stem with ConvStem for {model_type}")
+            if model_type == "convnext_small":
+                # 2-layer: 48→96
+                model.stem = ConvBlock1(48, end_siz=8)
+            elif model_type == "convnext_base":
+                # 3-layer: 64→96→128
+                model.stem = ConvBlock3(64)
+            elif model_type == "convnext_large":
+                # 3-layer: 96→144→192
+                model.stem = ConvBlockLarge(96)
+            else:
+                raise ValueError(f"ConvStem not configured for {model_type}")
 
-        # TODO: Uncomment when utils_architecture.py is fixed
-        # if model_config.use_convstem:
-        #     model = replace_convstem(model, model_type)
+        model = model.to(device)
 
         # Wrap model with DDP or DataParallel
         if use_ddp:

@@ -209,11 +209,34 @@ class ConvBlock1(nn.Module):
                                   LayerNorm(self.planes*2, data_format="channels_first"),
                                   nn.GELU()
                                   )
-          
+
 
     def forward(self, x):
         out = self.stem(x)
         # out = self.bn(out)
+        return out
+
+
+class ConvBlockLarge(nn.Module):
+    """ConvStem for ConvNeXt-Large: 3-layer 96→144→192"""
+    def __init__(self, siz=96):
+        super(ConvBlockLarge, self).__init__()
+        self.planes = siz
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, self.planes, kernel_size=3, stride=2, padding=1),
+            LayerNorm(self.planes, data_format="channels_first"),
+            nn.GELU(),
+            nn.Conv2d(self.planes, int(self.planes*1.5), kernel_size=3, stride=2, padding=1),
+            LayerNorm(int(self.planes*1.5), data_format="channels_first"),
+            nn.GELU(),
+            nn.Conv2d(int(self.planes*1.5), self.planes*2, kernel_size=3, stride=1, padding=1),
+            LayerNorm(self.planes*2, data_format="channels_first"),
+            nn.GELU()
+        )
+
+    def forward(self, x):
+        out = self.stem(x)
         return out
 
 

@@ -73,7 +73,9 @@ def get_imageNet_augmentation(type='default', out_size=224, config_dict=None):
         return transform
     elif type == 'test' or type is None:
         transform_list = [
-            transforms.Resize(int(256/224 * out_size)),
+            # Fixed: Use BICUBIC interpolation to match reference implementation
+            # Source: https://github.com/nmndeep/revisiting-at/blob/main/AA_eval.py#L112-L114
+            transforms.Resize(int(256/224 * out_size), interpolation=InterpolationMode.BICUBIC),
             transforms.CenterCrop(out_size),
         ]
     elif type == 'generation_id':

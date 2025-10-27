@@ -261,12 +261,15 @@ def get_indist_dataloader(
         )
         shuffle = False  # Sampler handles shuffling
 
+    # Only drop last batch during training, not during evaluation
+    drop_last = (split == "train")
+
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        drop_last=True,
+        drop_last=drop_last,
         pin_memory=True,
         num_workers=config.num_workers,
         persistent_workers=True,

@@ -3,6 +3,7 @@ import dataclasses
 import logging
 import math
 import os
+import signal
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -340,9 +341,13 @@ def train(cfg: TrainConfig):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(cfg.rand_seed + rank)
 
+    # Setup flag for SLURM signal handling (will be set by signal handler)
+    slurm_timeout_flag = {"triggered": False}
+
     # Initialize training state (may be overridden by resume)
     global_step_one_indexed: int = 0
     start_outdist_steps: int = cfg.attack.start_step
+    cur_outdist_steps: int = cfg.attack.start_step  # Current attack steps (updated in loop)
 
     image_generation_metrics = ImageGenerationMetrics()
     classification_metrics = ClassificationMetrics()
@@ -423,6 +428,36 @@ def train(cfg: TrainConfig):
                 f"outdist_steps {start_outdist_steps}"
             )
 
+    # Helper function to save training state (reduces code duplication)
+    # Defined here after all variables (model, optimizer, ema_model) are created
+    def save_state():
+        """Save current training state to file."""
+        rebm.training.modeling.save_training_state(
+            model=model,
+            optimizer=optimizer,
+            global_step=global_step_one_indexed,
+            cur_outdist_steps=cur_outdist_steps,
+            image_generation_metrics=image_generation_metrics,
+            classification_metrics=classification_metrics,
+            cfg=cfg,
+            ema_model=ema_model if cfg.use_ema else None,
+            wandb_run_id=wandb.run.id if wandb.run else None,
+        )
+
+    # Setup SLURM timeout signal handler
+    # SLURM sends SIGTERM/SIGUSR1 before killing the job
+    # Register handler to save checkpoint when signal is received
+    def slurm_timeout_handler(signum, frame):
+        if rank == 0:
+            LOGGER.warning(f"Received signal {signum}. SLURM timeout imminent, saving training state...")
+            slurm_timeout_flag["triggered"] = True
+
+    # Register signal handlers (SLURM typically sends SIGTERM or SIGUSR1)
+    signal.signal(signal.SIGTERM, slurm_timeout_handler)
+    signal.signal(signal.SIGUSR1, slurm_timeout_handler)
+    if rank == 0:
+        LOGGER.info("Registered SLURM timeout signal handlers (SIGTERM, SIGUSR1)")
+
     max_epochs_reached = False
     for cur_outdist_steps in range(
         start_outdist_steps, cfg.attack.max_steps + 1
@@ -472,6 +507,12 @@ def train(cfg: TrainConfig):
                     interval_in_imgs=cfg.n_imgs_per_evaluation_log,
                 )
             )
+
+            # Save training state BEFORE expensive evaluations
+            # This ensures we have a checkpoint even if killed during FID/accuracy eval
+            if is_evaluation_step and rank == 0:
+                LOGGER.info("Saving training state before evaluation...")
+                save_state()
 
             if is_evaluation_step and rank == 0:
                 model.zero_grad()
@@ -528,19 +569,20 @@ def train(cfg: TrainConfig):
                 if cfg.use_ddp:
                     dist.barrier()
 
-            # Save training state after evaluation
+            # Update metrics after evaluation (FID and accuracy may have changed)
             if is_evaluation_step and rank == 0:
-                rebm.training.modeling.save_training_state(
-                    model=model,
-                    optimizer=optimizer,
-                    global_step=global_step_one_indexed,
-                    cur_outdist_steps=cur_outdist_steps,
-                    image_generation_metrics=image_generation_metrics,
-                    classification_metrics=classification_metrics,
-                    cfg=cfg,
-                    ema_model=ema_model if cfg.use_ema else None,
-                    wandb_run_id=wandb.run.id if wandb.run else None,
-                )
+                save_state()
+
+            # Check for SLURM timeout signal
+            if slurm_timeout_flag["triggered"]:
+                if rank == 0:
+                    LOGGER.warning("SLURM timeout signal received. Saving final training state and exiting...")
+                    save_state()
+                    LOGGER.info("Training state saved. Exiting gracefully before SLURM timeout.")
+                # Exit the training loop
+                if cfg.use_ddp:
+                    dist.barrier()  # Synchronize all ranks before exit
+                return
 
             outdist_imgs = next(outdist_iter)[0].to(device)
             indist_imgs_ebm = train_indist_batch[0].to(device)

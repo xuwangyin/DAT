@@ -1,0 +1,34 @@
+# Model Configuration for ImageNet dual-AT ConvNeXt-Large model with ConvStem
+
+method: "dat"
+dataset: imagenet
+checkpoint: checkpoints/convnext_large_cvst_robust.pt
+model_type: convnext_large
+train_cmd: >
+  python -m rebm.training.train
+  experiments/imagenet/imagenet_indistonly_joint_convnext_300K.yaml
+  model.model_type=convnext_large
+  model.ckpt_path=checkpoints/convnext_large_cvst_robust.pt
+  optimizer=adamw
+  wd=0.05
+  lr=0.001
+  image_log.log_fid=true
+  image_log.adaptive_steps=true
+  AUC_th=0.2
+  model.normalize_input=false
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 15
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+
+# Training details
+notes: |
+  ConvNeXt-Large model with ConvStem for dual-AT training on ImageNet.
+  Uses ConvBlock1 to replace PatchStem for improved robustness.
+
+  IMPORTANT: This checkpoint expects [0,1] inputs WITHOUT ImageNet normalization.
+  The model was trained with add_normalization=0, so normalize_input must be false.
+  experiments/imagenet/imagenet_indistonly_joint_convnext_300K.yaml

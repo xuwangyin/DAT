@@ -112,14 +112,18 @@ def submit_job(
         time_limit = get_partition_time_limit(partition)
         train_cmd_str = " ".join(train_cmd_parts)
 
+        # Use SLURM's %j placeholder for job ID in log filename
+        log_file_with_jobid = str(log_file).replace(".log", "-%j.log")
+
         sbatch_cmd = [
             "sbatch",
             f"--job-name={job_name}",
-            f"--output={log_file}",
+            f"--output={log_file_with_jobid}",
             "--nodes=1",
             "--ntasks=1",
             f"--time={time_limit}",
             f"--partition={partition}",
+            "--signal=SIGUSR1@300",  # Send SIGUSR1 300 seconds (5 min) before timeout
             f"--wrap={train_cmd_str}",
         ]
 
