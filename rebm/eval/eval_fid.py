@@ -38,7 +38,7 @@ def run_fid_evaluation(cfg: TrainConfig) -> float:
     model.eval()
 
     LOGGER.info("Starting FID evaluation...")
-    fid, gen_imgs = evaluate_image_generation(model, cfg)
+    fid = evaluate_image_generation(model, cfg)
 
     LOGGER.info(f"FID evaluation completed. FID: {fid:.4f}")
     return fid
