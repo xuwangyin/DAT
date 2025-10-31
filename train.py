@@ -62,6 +62,13 @@ Examples:
         help="Print the command that would be executed without running it",
     )
 
+    parser.add_argument(
+        "--requeue",
+        action="store_true",
+        default=False,
+        help="Enable SLURM --requeue for automatic resumption after timeout/failure",
+    )
+
     return parser.parse_args()
 
 
@@ -85,8 +92,10 @@ def submit_job(
     job_name: str,
     log_file: Path,
     train_cmd: str,
+    wandb_name: str = None,
     partition: str = None,
     python_bin: str = "python",
+    requeue: bool = False,
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
@@ -110,7 +119,20 @@ def submit_job(
             partition = get_available_partition()
 
         time_limit = get_partition_time_limit(partition)
-        train_cmd_str = " ".join(train_cmd_parts)
+
+        # Build environment variables for the command
+        env_vars = []
+        if wandb_name:
+            env_vars.append(f"WANDB_NAME={wandb_name}")
+
+        # Generate WANDB_RUN_ID if requeue is enabled
+        # This allows automatic state file discovery after requeue
+        if requeue:
+            import wandb
+            wandb_run_id = wandb.util.generate_id()
+            env_vars.append(f"WANDB_RUN_ID={wandb_run_id}")
+
+        train_cmd_str = " ".join(env_vars + train_cmd_parts)
 
         # Use SLURM's %j placeholder for job ID in log filename
         log_file_with_jobid = str(log_file).replace(".log", "-%j.log")
@@ -127,6 +149,10 @@ def submit_job(
             f"--wrap={train_cmd_str}",
         ]
 
+        # Add --requeue flag if enabled
+        if requeue:
+            sbatch_cmd.insert(7, "--requeue")  # Insert after --partition
+
         try:
             subprocess.run(
                 sbatch_cmd, capture_output=True, text=True, check=True
@@ -142,6 +168,12 @@ def submit_job(
     else:
         try:
             print("Running training locally")
+
+            # Set WANDB_NAME environment variable if provided
+            env = os.environ.copy()
+            if wandb_name:
+                env['WANDB_NAME'] = wandb_name
+
             with TeeWriter(log_file) as tee:
                 process = subprocess.Popen(
                     train_cmd_parts,
@@ -150,6 +182,7 @@ def submit_job(
                     text=True,
                     bufsize=1,
                     universal_newlines=True,
+                    env=env,
                 )
 
                 for line in process.stdout:
@@ -173,6 +206,7 @@ def run_training_from_config(
     partition: str = None,
     dry_run: bool = False,
     verbose: bool = True,
+    requeue: bool = False,
 ) -> bool:
     """
     Run training using YAML configuration file.
@@ -182,6 +216,7 @@ def run_training_from_config(
         partition: SLURM partition to use (if None, uses automatic detection)
         dry_run: If True, print command without executing
         verbose: Whether to print progress messages
+        requeue: If True, enable SLURM --requeue for automatic resumption
 
     Returns:
         True if successful, False otherwise
@@ -222,8 +257,9 @@ def run_training_from_config(
 
     if verbose:
         print(f"Submitting training job: {config_name}")
+        print(f"WandB run name: {config_name}")
 
-    if submit_job(safe_job_name, log_file, config["train_cmd"], partition):
+    if submit_job(safe_job_name, log_file, config["train_cmd"], wandb_name=config_name, partition=partition, requeue=requeue):
         if verbose:
             print("Job submission complete.")
         return True
@@ -243,6 +279,7 @@ def main():
             partition=args.partition,
             dry_run=args.dry_run,
             verbose=True,
+            requeue=args.requeue,
         )
         if not success:
             sys.exit(1)

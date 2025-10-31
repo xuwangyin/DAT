@@ -755,6 +755,19 @@ if __name__ == "__main__":
     if rank == 0:
         run_name = os.environ.get("WANDB_NAME", Path(config_file).stem)
 
+        # Auto-resume support for SLURM --requeue
+        # If WANDB_RUN_ID is set and no explicit resume_from_state, check for saved state
+        if not cfg.resume_from_state and os.environ.get("WANDB_RUN_ID"):
+            wandb_run_id = os.environ.get("WANDB_RUN_ID")
+            auto_state_path = rebm.training.modeling.get_training_state_path(
+                cfg.wandb_dir, cfg.wandb_project, wandb_run_id
+            )
+            if os.path.exists(auto_state_path):
+                cfg.resume_from_state = auto_state_path
+                LOGGER.info(f"Auto-resume: found saved state at {auto_state_path} (WANDB_RUN_ID={wandb_run_id})")
+            else:
+                LOGGER.info(f"WANDB_RUN_ID={wandb_run_id} set, but no saved state found yet. Starting fresh.")
+
         # Load wandb run ID from saved state if resuming
         resume_wandb_id = None
         if cfg.resume_from_state:
@@ -779,6 +792,12 @@ if __name__ == "__main__":
             wandb_init_kwargs['resume'] = 'must'
             # Don't set name when resuming - wandb keeps the original run name
         else:
+            # If WANDB_RUN_ID is set (for --requeue support), use it explicitly
+            # Otherwise wandb will auto-generate a new run ID
+            env_run_id = os.environ.get("WANDB_RUN_ID")
+            if env_run_id:
+                wandb_init_kwargs['id'] = env_run_id
+                LOGGER.info(f"Using WANDB_RUN_ID from environment: {env_run_id}")
             wandb_init_kwargs['name'] = run_name
 
         wandb.init(**wandb_init_kwargs)
