@@ -307,6 +307,20 @@ def save_checkpoint(
     )
 
 
+def get_training_state_path(wandb_dir: str, wandb_project: str, run_id: str) -> str:
+    """Get the stable path for training state based on run ID.
+
+    Args:
+        wandb_dir: WandB directory (e.g., "wandb")
+        wandb_project: WandB project name (e.g., "robust-ebms-2")
+        run_id: WandB run ID
+
+    Returns:
+        Path to training state file
+    """
+    return os.path.join(wandb_dir, wandb_project, "states", run_id, "training_state_latest.pth")
+
+
 def save_training_state(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -353,8 +367,9 @@ def save_training_state(
     if ema_model is not None:
         state['ema_state_dict'] = ema_model.state_dict()
 
-    # Save state (overwrites previous)
-    save_path = os.path.join(wandb.run.dir, "training_state_latest.pth")
+    # Save to stable directory based on run ID (without timestamp)
+    # This allows resumption with a stable path across multiple resume attempts
+    save_path = get_training_state_path(cfg.wandb_dir, cfg.wandb_project, wandb.run.id)
     Path(os.path.dirname(save_path)).mkdir(parents=True, exist_ok=True)
     torch.save(state, save_path)
 
