@@ -71,6 +71,7 @@ class DataConfig:
     num_workers: int
 
     num_classes: int = 1
+    image_size: int = 256  # Input image size (256 for generative models, 224 for standard classification)
 
 
 @dataclass

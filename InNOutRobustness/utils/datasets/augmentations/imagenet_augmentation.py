@@ -75,6 +75,11 @@ def get_imageNet_augmentation(type='default', out_size=224, config_dict=None):
         transform_list = [
             # Fixed: Use BICUBIC interpolation to match reference implementation
             # Source: https://github.com/nmndeep/revisiting-at/blob/main/AA_eval.py#L112-L114
+            # This maintains crop_pct=0.875 (i.e., 224/256) across different resolutions
+            # For out_size=224: Resize(256) -> CenterCrop(224)
+            # For out_size=256: Resize(292) -> CenterCrop(256)
+            #   (matches https://github.com/nmndeep/revisiting-at/blob/d7166c074223b89e3b7e1ec1489a8d069cc5afb7/AA_eval.py#L112)
+            # Formula: int(256/224 * out_size) = int(out_size / 0.875) = scale_size
             transforms.Resize(int(256/224 * out_size), interpolation=InterpolationMode.BICUBIC),
             transforms.CenterCrop(out_size),
         ]

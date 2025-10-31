@@ -13,7 +13,7 @@ def get_imagenet256_dataset(datadir, interpolation=2, transform=None):
     if transform is None:
         transform = transforms.Compose(
             [
-                transforms.RandomResizedCrop(224, interpolation=interpolation),
+                transforms.RandomResizedCrop(256, interpolation=interpolation),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
             ]
@@ -27,7 +27,7 @@ torch.manual_seed(0)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(0)
 
-ood_dataset = get_imagenet256_dataset(datadir="data/openimages/val")
+ood_dataset = get_imagenet256_dataset(datadir="val")
 print(f"Dataset size: {len(ood_dataset)} samples")
 
 batch_size = 100

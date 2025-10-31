@@ -118,8 +118,13 @@ def log_generate_images(
         ]
         ood_dataset = torch.utils.data.TensorDataset(ood_samples)
     else:
+        # Resize seed images to match training resolution
+        transform = transforms.Compose([
+            transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
+            transforms.ToTensor()
+        ])
         ood_dataset = torchvision.datasets.ImageFolder(
-            cfg.image_log.ood_data_dir, transform=transforms.ToTensor()
+            cfg.image_log.ood_data_dir, transform=transform
         )
     loader = torch.utils.data.DataLoader(
         ood_dataset, batch_size=samples, num_workers=1, shuffle=False
@@ -254,8 +259,13 @@ def compute_fid(
         ood_samples = torch.load(fid_cfg.ood_data_dir, weights_only=True)
         ood_dataset = torch.utils.data.TensorDataset(ood_samples)
     else:
+        # Resize seed images to match training resolution
+        transform = transforms.Compose([
+            transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
+            transforms.ToTensor()
+        ])
         ood_dataset = torchvision.datasets.ImageFolder(
-            fid_cfg.ood_data_dir, transform=transforms.ToTensor()
+            fid_cfg.ood_data_dir, transform=transform
         )
     data_loader = torch.utils.data.DataLoader(
         ood_dataset,
@@ -460,8 +470,13 @@ def compute_class_averaged_fid(
         ood_samples = torch.load(fid_cfg.ood_data_dir, weights_only=True)
         ood_dataset = torch.utils.data.TensorDataset(ood_samples)
     else:
+        # Resize seed images to match training resolution
+        transform = transforms.Compose([
+            transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
+            transforms.ToTensor()
+        ])
         ood_dataset = torchvision.datasets.ImageFolder(
-            fid_cfg.ood_data_dir, transform=transforms.ToTensor()
+            fid_cfg.ood_data_dir, transform=transform
         )
     data_loader = torch.utils.data.DataLoader(
         ood_dataset,

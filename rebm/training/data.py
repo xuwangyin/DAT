@@ -221,7 +221,7 @@ def get_indist_dataset(
             else:
                 assert augm_type in ["none", "test"]
 
-            transform = get_imageNet_augmentation(type=augm_type, out_size=224)
+            transform = get_imageNet_augmentation(type=augm_type, out_size=config.image_size)
             dataset_split = "train" if split == "train" else "val"
             indist_dataset = torchvision.datasets.ImageNet(
                 config.indist_ds_dir, split=dataset_split, transform=transform
@@ -302,7 +302,7 @@ def get_outdist_dataset(
                     else "generation_od"
                 )
 
-            transform = get_imageNet_augmentation(type=augm_type, out_size=224)
+            transform = get_imageNet_augmentation(type=augm_type, out_size=config.image_size)
             dataset = torchvision.datasets.ImageFolder(
                 config.outdist_std_dir, transform=transform
             )
