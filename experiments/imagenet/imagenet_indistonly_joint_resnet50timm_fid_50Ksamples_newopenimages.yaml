@@ -6,6 +6,7 @@ data:
   outdist_std_dir: "data/OpenImage-O-large/train"
   num_workers: 16
   num_classes: 1000
+  image_size: 256
 
 attack:
   attack_type: "pgd"
