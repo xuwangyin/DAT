@@ -46,6 +46,7 @@ Examples:
         choices=[
             "mi3258x",
             "mi3008x",
+            "mi3008x_long",
             "mi2508x",
             "mi2104x",
             "devel",
@@ -66,7 +67,16 @@ Examples:
         "--requeue",
         action="store_true",
         default=False,
-        help="Enable SLURM --requeue for automatic resumption after timeout/failure",
+        help="Enable SLURM --requeue for automatic resumption on node failure. "
+             "For timeouts, use 'scontrol requeue <jobid>' or manually resubmit with --wandb-run-id",
+    )
+
+    parser.add_argument(
+        "-r",
+        "--wandb-run-id",
+        type=str,
+        default=None,
+        help="WandB run ID for resuming training. If not provided with --requeue, a new ID is auto-generated",
     )
 
     return parser.parse_args()
@@ -96,6 +106,7 @@ def submit_job(
     partition: str = None,
     python_bin: str = "python",
     requeue: bool = False,
+    wandb_run_id: str = None,
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
@@ -125,11 +136,16 @@ def submit_job(
         if wandb_name:
             env_vars.append(f"WANDB_NAME={wandb_name}")
 
-        # Generate WANDB_RUN_ID if requeue is enabled
+        # Set WANDB_RUN_ID if requeue is enabled or wandb_run_id is provided
         # This allows automatic state file discovery after requeue
-        if requeue:
+        if requeue or wandb_run_id:
             import wandb
-            wandb_run_id = wandb.util.generate_id()
+            # Use provided run_id if given, otherwise generate new one
+            if wandb_run_id:
+                print(f"Using provided WANDB_RUN_ID: {wandb_run_id}")
+            else:
+                wandb_run_id = wandb.util.generate_id()
+                print(f"Generated new WANDB_RUN_ID: {wandb_run_id}")
             env_vars.append(f"WANDB_RUN_ID={wandb_run_id}")
 
         train_cmd_str = " ".join(env_vars + train_cmd_parts)
@@ -137,6 +153,7 @@ def submit_job(
         # Use SLURM's %j placeholder for job ID in log filename
         log_file_with_jobid = str(log_file).replace(".log", "-%j.log")
 
+        # Build sbatch command
         sbatch_cmd = [
             "sbatch",
             f"--job-name={job_name}",
@@ -146,12 +163,17 @@ def submit_job(
             f"--time={time_limit}",
             f"--partition={partition}",
             "--signal=SIGUSR1@300",  # Send SIGUSR1 300 seconds (5 min) before timeout
-            f"--wrap={train_cmd_str}",
         ]
 
-        # Add --requeue flag if enabled
+        # Add --requeue and --open-mode=append if enabled
         if requeue:
-            sbatch_cmd.insert(7, "--requeue")  # Insert after --partition
+            sbatch_cmd.extend([
+                "--requeue",  # Automatically requeue on node failure or timeout
+                "--open-mode=append",  # Append to log file instead of overwriting on requeue
+            ])
+
+        # Add the wrapped command at the end
+        sbatch_cmd.append(f"--wrap={train_cmd_str}")
 
         try:
             subprocess.run(
@@ -207,6 +229,7 @@ def run_training_from_config(
     dry_run: bool = False,
     verbose: bool = True,
     requeue: bool = False,
+    wandb_run_id: str = None,
 ) -> bool:
     """
     Run training using YAML configuration file.
@@ -217,6 +240,7 @@ def run_training_from_config(
         dry_run: If True, print command without executing
         verbose: Whether to print progress messages
         requeue: If True, enable SLURM --requeue for automatic resumption
+        wandb_run_id: WandB run ID for resuming training (auto-generates if not provided with --requeue)
 
     Returns:
         True if successful, False otherwise
@@ -259,7 +283,7 @@ def run_training_from_config(
         print(f"Submitting training job: {config_name}")
         print(f"WandB run name: {config_name}")
 
-    if submit_job(safe_job_name, log_file, config["train_cmd"], wandb_name=config_name, partition=partition, requeue=requeue):
+    if submit_job(safe_job_name, log_file, config["train_cmd"], wandb_name=config_name, partition=partition, requeue=requeue, wandb_run_id=wandb_run_id):
         if verbose:
             print("Job submission complete.")
         return True
@@ -280,6 +304,7 @@ def main():
             dry_run=args.dry_run,
             verbose=True,
             requeue=args.requeue,
+            wandb_run_id=args.wandb_run_id,
         )
         if not success:
             sys.exit(1)
