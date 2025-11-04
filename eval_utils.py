@@ -69,6 +69,14 @@ def load_yaml_config(config_file: str) -> Dict[str, Any]:
     if missing_fields:
         raise ValueError(f"Missing required fields in config: {missing_fields}")
 
+    # Require image_size for ImageNet configs to avoid ambiguity
+    if config.get("dataset", "").lower() == "imagenet":
+        if "image_size" not in config:
+            raise ValueError(
+                f"Missing required field 'image_size' in ImageNet config. "
+                f"Please explicitly specify image_size (e.g., 224 or 256) in {config_file}"
+            )
+
     return config
 
 

@@ -23,6 +23,7 @@ fid_num_steps: 15
 
 # Robust accuracy evaluation configuration
 pgd_epsilon: 3.0
+image_size: 224
 
 # Training details
 notes: |
