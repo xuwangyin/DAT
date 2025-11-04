@@ -117,6 +117,68 @@ def normalize_model(model: nn.Module, mean: Tuple[float, float, float],
     return nn.Sequential(layers)
 
 
+def create_convnext_model(
+    model_type: str,
+    num_classes: int = 1000,
+    normalize_input: bool = False,
+    use_layernorm: bool = True,
+    use_convstem: bool = False,
+) -> nn.Module:
+    """Create ConvNeXt model with optional ConvStem replacement.
+
+    This function provides a single source of truth for ConvNeXt initialization,
+    ensuring consistency between training and evaluation.
+
+    Args:
+        model_type: One of "convnext_small", "convnext_base", "convnext_large", "convnext_tiny"
+        num_classes: Number of output classes (default: 1000 for ImageNet)
+        normalize_input: Add ImageNet input normalization layer (default: False)
+        use_layernorm: Use LayerNorm instead of BatchNorm (default: True)
+        use_convstem: Replace patch stem with ConvStem for improved robustness (default: False)
+
+    Returns:
+        Initialized ConvNeXt model
+
+    Raises:
+        ValueError: If model_type is not supported
+    """
+    from timm.models.convnext import convnext_small, convnext_base, convnext_tiny, convnext_large
+
+    # Model creation lookup
+    model_creators = {
+        "convnext_small": convnext_small,
+        "convnext_tiny": convnext_tiny,
+        "convnext_base": convnext_base,
+        "convnext_large": convnext_large,
+    }
+
+    # ConvStem configurations (if use_convstem=True)
+    convstem_configs = {
+        "convnext_small": lambda: ConvBlock1(48, end_siz=8),  # 2-layer: 48→96
+        "convnext_base": lambda: ConvBlock3(64),              # 3-layer: 64→96→128
+        "convnext_large": lambda: ConvBlockLarge(96),         # 3-layer: 96→144→192
+    }
+
+    if model_type not in model_creators:
+        raise ValueError(f"Unsupported ConvNeXt model type: {model_type}")
+
+    # Create base model
+    model = model_creators[model_type](
+        pretrained=False,
+        num_classes=num_classes,
+        normalize_input=normalize_input,
+        use_layernorm=use_layernorm,
+    )
+
+    # Replace patch stem with ConvStem if specified
+    if use_convstem:
+        if model_type not in convstem_configs:
+            raise ValueError(f"ConvStem not configured for {model_type}")
+        model.stem = convstem_configs[model_type]()
+
+    return model
+
+
 class ConvBlock(nn.Module):
     expansion = 1
     def __init__(self, siz=48, end_siz=8, fin_dim=384):
