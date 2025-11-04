@@ -1,0 +1,15 @@
+method: "dat"
+dataset: "imagenet"
+checkpoint: wandb/robust-ebms-2/wandb/run-20251030_110140-0at9qmau/files/model_bestfid.pth
+model_type: "ResNet50ImageNet"
+train_cmd: >
+  python -m rebm.training.train
+  experiments/imagenet/imagenet_indistonly_joint_resnet50_bs512_imagenetnormalization_newopenimages_stepsize2.0_ema_imglogsteps15_sweepsamples2560_300K.yaml
+  AUC_th=0.4
+  data.image_size=256
+  attack.max_steps=30
+fid_eval_config: "experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml"
+fid_num_steps: 14
+pgd_epsilon: 3.0
+image_size: 256
+notes: "Dual-AT ResNet50 trained on ImageNet at 256x256 resolution with T=30 attack steps."

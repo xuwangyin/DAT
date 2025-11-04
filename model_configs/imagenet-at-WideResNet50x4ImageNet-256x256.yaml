@@ -1,0 +1,17 @@
+# Model Configuration for ImageNet AT WideResNet50x4 model - 256x256 evaluation
+
+method: "at"
+dataset: imagenet
+checkpoint: ./checkpoints/wide_resnet50_4_l2_eps3_model.ckpt
+model_type: WideResNet50x4ImageNet
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 11
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+image_size: 256
+
+# Training details
+notes: "Standard AT WideResNet50x4 evaluated at 256x256 resolution (trained at 224x224)."

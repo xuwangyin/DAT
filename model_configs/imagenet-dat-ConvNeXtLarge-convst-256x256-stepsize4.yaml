@@ -1,0 +1,31 @@
+# Model Configuration for ImageNet dual-AT ConvNeXt-Large model with ConvStem
+
+method: "dat"
+dataset: imagenet
+checkpoint: wandb/robust-ebms-2/wandb/run-20251102_201713-7ib0e415/files/model_bestfid.pth
+model_type: convnext_large
+train_cmd: >
+  python -m rebm.training.train
+  experiments/imagenet/imagenet_indistonly_joint_convnext_300K.yaml
+  model.model_type=convnext_large
+  model.ckpt_path=checkpoints/convnext_large_cvst_robust.pt
+  optimizer=adamw
+  wd=0.05
+  lr=0.001
+  image_log.log_fid=true
+  image_log.adaptive_steps=true
+  AUC_th=0.2
+  model.normalize_input=false
+  data.image_size=256
+  attack.step_size=4.0
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_convnext_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 22
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+image_size: 256
+
+# Training details
+notes: "Dual-AT ConvNeXt-Large trained on ImageNet at 256x256 resolution with step size 4.0."

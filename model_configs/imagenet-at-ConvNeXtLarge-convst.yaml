@@ -1,0 +1,17 @@
+# Model Configuration for ImageNet AT ConvNeXt-Large model with ConvStem
+
+method: "at"
+dataset: imagenet
+checkpoint: checkpoints/convnext_large_cvst_robust.pt
+model_type: convnext_large
+
+# FID evaluation configuration
+fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_convnext_fid_50Ksamples_newopenimages.yaml
+fid_num_steps: 22
+
+# Robust accuracy evaluation configuration
+pgd_epsilon: 3.0
+image_size: 224
+
+# Training details
+notes: "Standard AT ConvNeXt-Large with ConvStem trained at 224x224 (no input normalization)."
