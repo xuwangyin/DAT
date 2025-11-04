@@ -15,6 +15,7 @@ from eval_utils import (
     check_job_completed,
     create_log_directory,
     get_available_partition,
+    get_partition_time_limit,
     load_yaml_config,
 )
 
@@ -96,6 +97,7 @@ def submit_job(
     calibration: bool = False,
     calibration_save_path: str = None,
     partition: str = None,
+    config: dict = None,
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
@@ -144,6 +146,7 @@ def submit_job(
         model_type_mapping = {
             "ResNet50ImageNet": "resnet50",
             "WideResNet50x4ImageNet": "wide_resnet50_4",
+            "convnext_large": "convnext_large",
         }
 
         if model_type not in model_type_mapping:
@@ -199,9 +202,15 @@ def submit_job(
                 str(batch_size),
                 "--architecture",
                 converted_model_type,
-                "--preprocessing",
-                "Res256Crop224",
             ]
+
+            # Add image size if specified in config, otherwise defaults to 224
+            if "image_size" in config:
+                python_cmd.extend(["--img_size", str(config["image_size"])])
+
+            # Add --no_normalization for ConvNeXt models (they're trained without input normalization)
+            if model_type == "convnext_large":
+                python_cmd.append("--no_normalization")
     else:
         # Catch-all for unsupported datasets
         raise ValueError(
@@ -222,14 +231,7 @@ def submit_job(
         # SLURM submission
         if partition is None:
             partition = get_available_partition()
-        time_limits = {
-            "mi3008x": "4:00:00",
-            "mi3258x": "1:00:00",
-            "mi2508x": "12:00:00",
-            "mi2104x": "24:00:00",
-        }
-        time_limit = time_limits.get(partition, "4:00:00")
-        time_limit = "0:30:00"
+        time_limit = get_partition_time_limit(partition)
 
         sbatch_cmd = [
             "sbatch",
@@ -369,6 +371,7 @@ def run_acc_evaluation_from_config(
         calibration=calibration,
         calibration_save_path=calibration_save_path,
         partition=partition,
+        config=config,
     ):
         if verbose:
             print("Job submission complete.")

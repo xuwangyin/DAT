@@ -5,6 +5,7 @@ Evaluates a custom checkpoint against ImageNet using L2 threat model
 """
 
 import argparse
+import math
 import os
 
 import torch
@@ -15,6 +16,33 @@ from robustbench.model_zoo.architectures.utils_architectures import (
 from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
 from timm.models import create_model
 from timm.models.resnet import Bottleneck, _create_resnet
+from torchvision import transforms, datasets
+from torch.utils.data import DataLoader
+import robustbench
+from rebm.training.utils_architecture import create_convnext_model
+
+
+def get_preprocessing_function(img_size=224, crop_pct=0.875):
+    """Create preprocessing function for arbitrary image size.
+
+    Args:
+        img_size: Target image size (default: 224)
+        crop_pct: Crop percentage (default: 0.875)
+
+    Returns:
+        Preprocessing function compatible with RobustBench
+    """
+    scale_size = int(math.floor(img_size / crop_pct))
+
+    def preprocess(x):
+        """Preprocessing that resizes, center crops, and converts to tensor."""
+        return transforms.Compose([
+            transforms.Resize(scale_size, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(img_size),
+            transforms.ToTensor(),
+        ])(x)
+
+    return preprocess
 
 
 def load_custom_model(checkpoint_path, architecture="resnet50"):
@@ -35,6 +63,15 @@ def load_custom_model(checkpoint_path, architecture="resnet50"):
         model_args = dict(block=Bottleneck, layers=(3, 4, 6, 3), base_width=256)
         model = _create_resnet(
             "wide_resnet50_4", pretrained=False, num_classes=1000, **model_args
+        )
+    elif architecture == "convnext_large":
+        # Use shared ConvNeXt creation function for consistency with training
+        model = create_convnext_model(
+            model_type="convnext_large",
+            num_classes=1000,
+            normalize_input=False,
+            use_layernorm=True,
+            use_convstem=True,  # AT ConvNeXt models use ConvStem
         )
     else:
         raise ValueError(f"Architecture {architecture} not supported yet")
@@ -113,10 +150,15 @@ def main():
         help="Model architecture",
     )
     parser.add_argument(
-        "--preprocessing",
-        type=str,
-        default="Res256Crop224",
-        help="Preprocessing to use (Res256Crop224, Res224, etc.)",
+        "--img_size",
+        type=int,
+        default=224,
+        help="Image size for preprocessing (e.g., 224 for 224x224, 256 for 256x256). Default: 224",
+    )
+    parser.add_argument(
+        "--no_normalization",
+        action="store_true",
+        help="Do not add ImageNet normalization (use for models trained without normalization, e.g., ConvNeXt)",
     )
 
     args = parser.parse_args()
@@ -125,10 +167,14 @@ def main():
     model = load_custom_model(args.checkpoint, args.architecture)
     model = model.eval()
 
-    # Add ImageNet normalization
-    mu = (0.485, 0.456, 0.406)
-    sigma = (0.229, 0.224, 0.225)
-    model = normalize_model(model, mu, sigma)
+    # Add ImageNet normalization unless disabled
+    if not args.no_normalization:
+        mu = (0.485, 0.456, 0.406)
+        sigma = (0.229, 0.224, 0.225)
+        model = normalize_model(model, mu, sigma)
+        print("Added ImageNet normalization layer")
+    else:
+        print("Skipping normalization (--no_normalization specified)")
 
     model.eval()
     print("Model loaded and set to eval mode")
@@ -149,16 +195,43 @@ def main():
     # Convert threat model string to enum
     threat_model = ThreatModel(args.threat_model)
 
-    print("\nStarting evaluation:")
+    # Create preprocessing function
+    preprocessing = get_preprocessing_function(args.img_size)
+    preprocessing_name = f"Resize{int(math.floor(args.img_size/0.875))}Crop{args.img_size}"
+    print(f"Using preprocessing: {preprocessing_name}")
+    trans = preprocessing
+
+    # Compute clean accuracy on full validation set
+    print("\nComputing clean accuracy on full validation set...")
+    val_dir = os.path.join(args.data_dir, 'val')
+    val_dataset = datasets.ImageFolder(val_dir, transform=trans)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size,
+                           shuffle=False, num_workers=4, pin_memory=True)
+
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+    clean_acc_full = correct / total
+    print(f"Clean accuracy (full validation set): {clean_acc_full:.2%}")
+
+    print("\nStarting adversarial evaluation:")
     print("  Dataset: ImageNet")
     print(f"  Threat model: {args.threat_model}")
     print(f"  Epsilon: {args.eps}")
     print(f"  Number of examples: {args.n_examples}")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Data directory: {args.data_dir}")
+    print(f"  Preprocessing: {preprocessing_name}")
 
     # Run evaluation with preprocessing specified
-    clean_acc, robust_acc = benchmark(
+    _, robust_acc = benchmark(
         model=model,
         dataset=BenchmarkDataset.imagenet,
         threat_model=threat_model,
@@ -167,13 +240,13 @@ def main():
         data_dir=args.data_dir,
         batch_size=args.batch_size,
         device=device,
-        preprocessing=args.preprocessing,  # Use specified preprocessing
+        preprocessing=preprocessing,  # Use specified preprocessing (string or function)
     )
 
     print("\n" + "=" * 50)
     print("EVALUATION RESULTS")
     print("=" * 50)
-    print(f"Clean accuracy: {clean_acc:.4f} ({clean_acc:.2%})")
+    print(f"Clean accuracy (full validation set): {clean_acc_full:.4f} ({clean_acc_full:.2%})")
     print(
         f"Robust accuracy ({args.threat_model}, eps={args.eps}): {robust_acc:.4f} ({robust_acc:.2%})"
     )
