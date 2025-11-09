@@ -156,6 +156,7 @@ class TrainConfig:
 
     # Evaluation parameters
     robust_eval: bool = True
+    keep_samples: bool = False
     indist_perturb: bool = False
     indist_perturb_steps: int = 10
     indist_perturb_eps: float = 0.5

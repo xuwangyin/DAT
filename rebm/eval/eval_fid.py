@@ -38,9 +38,19 @@ def run_fid_evaluation(cfg: TrainConfig) -> float:
     model.eval()
 
     LOGGER.info("Starting FID evaluation...")
-    fid = evaluate_image_generation(model, cfg)
+    fid, num_steps = evaluate_image_generation(model, cfg)
 
-    LOGGER.info(f"FID evaluation completed. FID: {fid:.4f}")
+    LOGGER.info(f"FID evaluation completed. FID: {fid:.4f}, gen_steps: {num_steps}")
+
+    savedir = cfg.image_log.save_dir
+    npz_path = f"{savedir}.npz"
+    if cfg.keep_samples:
+        LOGGER.info(f"Generated samples saved to: {savedir}")
+    else:
+        LOGGER.info(f"Generated samples deleted (use --keep-samples to keep for Precision/Recall evaluation)")
+    LOGGER.info(f"For Precision/Recall evaluation, run:")
+    LOGGER.info(f"  python images_to_npz.py {savedir} {npz_path} && python ./guided-diffusion/evaluations/evaluator.py ./guided-diffusion/evaluations/VIRTUAL_imagenet256_labeled.npz {npz_path}")
+
     return fid
 
 

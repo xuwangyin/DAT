@@ -63,6 +63,26 @@ python train.py model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
   ```
   Example: `python run_fid_eval.py model_configs/cifar10-dat-WideResNet34x10-T50.yaml`
 
+  **Precision & Recall**: For additional P&R metrics using OpenAI's official evaluator:
+
+  One-time setup:
+  ```bash
+  # Clone evaluator repository
+  git clone https://github.com/openai/guided-diffusion.git
+  # Download ImageNet 256×256 reference batch
+  wget -P ./guided-diffusion/evaluations https://openaipublic.blob.core.windows.net/diffusion/jul-2021/ref_batches/imagenet/256/VIRTUAL_imagenet256_labeled.npz
+  ```
+
+  Usage:
+  ```bash
+  # Generate samples and keep them
+  python run_fid_eval.py $config_file --keep-samples
+  # Convert images to npz format
+  python images_to_npz.py image_log/<run_id> image_log/<run_id>.npz
+  # Run OpenAI's evaluator
+  python ./guided-diffusion/evaluations/evaluator.py ./guided-diffusion/evaluations/VIRTUAL_imagenet256_labeled.npz image_log/<run_id>.npz
+  ```
+
 - **Expected Calibration Error (ECE)**: Evaluate the calibration quality of model predictions:
   ```bash
   python run_acc_eval.py --calibration $config_file

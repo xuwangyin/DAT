@@ -429,18 +429,22 @@ def compute_fid(
         )
         LOGGER.info(f"IS: {is_mean:.3f} ± {is_std:.3f}")
 
-    def cleanup_directory(directory_path):
-        try:
-            shutil.rmtree(directory_path)
-            LOGGER.info(f"Cleaned up generated images from {directory_path}")
-        except Exception as e:
-            LOGGER.warning(
-                f"Failed to clean up directory {directory_path}: {e}"
-            )
+    # Clean up generated images unless keep_samples is True
+    if not cfg.keep_samples:
+        def cleanup_directory(directory_path):
+            try:
+                shutil.rmtree(directory_path)
+                LOGGER.info(f"Cleaned up generated images from {directory_path}")
+            except Exception as e:
+                LOGGER.warning(
+                    f"Failed to clean up directory {directory_path}: {e}"
+                )
 
-    # Clean up generated images in background to avoid blocking training
-    with ThreadPoolExecutor(max_workers=1) as cleanup_executor:
-        cleanup_executor.submit(cleanup_directory, savedir)
+        # Clean up generated images in background to avoid blocking training
+        with ThreadPoolExecutor(max_workers=1) as cleanup_executor:
+            cleanup_executor.submit(cleanup_directory, savedir)
+    else:
+        LOGGER.info(f"Keeping generated images at: {savedir}")
 
     return fid
 
