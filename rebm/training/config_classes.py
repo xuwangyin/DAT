@@ -41,9 +41,7 @@ class ImageLogConfig:
 
     # Adaptive FID step selection
     adaptive_steps: bool = False  # Enable adaptive step selection
-    step_sweep_range: Optional[List[int]] = (
-        None  # Steps to sweep (e.g. [1, 5, 10, 20, 30])
-    )
+    sweep_radius: int = 3  # Sweep num_steps ± radius (e.g., radius=3 sweeps ±3 steps)
     sweep_num_samples: int = 500  # Smaller sample count for step sweep
 
     # Dependent generation params

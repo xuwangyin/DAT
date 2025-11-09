@@ -147,49 +147,49 @@ def log_generate_images(
 
 def evaluate_image_generation(
     model: nn.Module, cfg
-) -> float | None:
+) -> tuple[float, int]:
     """Compute FID score for generated images.
 
     Note: This only computes FID. For logging sample images, use log_generate_images()
     directly in the training loop.
+
+    Returns:
+        tuple: (fid, num_steps) where num_steps is the number of generation steps used
     """
     assert_no_grad(model)
     model.eval()
 
-    if cfg.image_log.log_fid:
-        if cfg.image_log.adaptive_steps:
-            optimal_steps = find_optimal_steps(cfg, model)
-            fid = compute_fid(
-                model=model,
-                cfg=cfg,
-                override_fid_cfg={"num_steps": optimal_steps},
-            )
-        else:
-            fid = compute_fid(
-                model=model,
-                cfg=cfg,
-            )
+    if cfg.image_log.adaptive_steps:
+        optimal_steps = find_optimal_steps(cfg, model)
+        fid = compute_fid(
+            model=model,
+            cfg=cfg,
+            override_fid_cfg={"num_steps": optimal_steps},
+        )
+        num_steps = optimal_steps
+    else:
+        fid = compute_fid(
+            model=model,
+            cfg=cfg,
+        )
+        num_steps = cfg.image_log.num_steps
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
-        return fid
-
-    return None
+    return fid, num_steps
 
 
 def find_optimal_steps(cfg, model: nn.Module) -> int:
     if not cfg.image_log.adaptive_steps:
         return cfg.image_log.num_steps
 
-    if cfg.image_log.step_sweep_range is not None:
-        step_candidates = cfg.image_log.step_sweep_range
-    else:
-        base_steps = cfg.image_log.num_steps
-        step_candidates = [
-            max(1, base_steps + offset)
-            for offset in [-4, -3, -2, -1, 0, 1, 2, 3, 4]
-        ]
+    radius = cfg.image_log.sweep_radius
+    base_steps = cfg.image_log.num_steps
+    step_candidates = [
+        max(1, base_steps + offset)
+        for offset in range(-radius, radius + 1)
+    ]
     sweep_samples = cfg.image_log.sweep_num_samples
 
     LOGGER.info(
