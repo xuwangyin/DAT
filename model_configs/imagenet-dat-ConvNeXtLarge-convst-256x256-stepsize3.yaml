@@ -14,6 +14,8 @@ train_cmd: >
   lr=0.001
   image_log.log_fid=true
   image_log.adaptive_steps=true
+  image_log.num_steps=22
+  image_log.sweep_radius=3
   AUC_th=0.2
   model.normalize_input=false
   data.image_size=256
