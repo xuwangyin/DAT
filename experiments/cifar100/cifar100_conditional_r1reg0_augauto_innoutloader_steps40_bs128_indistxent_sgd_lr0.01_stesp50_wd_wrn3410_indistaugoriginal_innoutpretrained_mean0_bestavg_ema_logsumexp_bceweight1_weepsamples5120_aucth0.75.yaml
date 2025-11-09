@@ -43,7 +43,6 @@ image_log:
   num_samples: 10000
   # batch_size: 5000
   adaptive_steps: true
-  step_sweep_range: null
   sweep_num_samples: 5120
 
 

@@ -35,7 +35,7 @@ model:
 
 image_log:
   attack_type: "pgd"
-  num_steps: 20
+  num_steps: 22
   step_size: 8
   eps: 10000
   log_fid: true # TODO
@@ -46,7 +46,7 @@ image_log:
 
   # Adaptive step selection
   adaptive_steps: true
-  step_sweep_range: null
+  sweep_radius: 3
   sweep_num_samples: 2560
 
 

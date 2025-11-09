@@ -34,7 +34,7 @@ model:
 
 image_log:
   attack_type: "pgd"
-  num_steps: 15
+  num_steps: 22
   step_size: 8
   eps: 10000
   log_fid: true # TODO
@@ -53,7 +53,7 @@ r1reg: 0  # Weight for R1 regularization
 # indist_eps: .inf  # Perturbation limit for in-distribution adversarial attack
 # indist_aug: false  # Perform data augmentation on in-distribution data
 # pretrain: false  # Use pretrained model for the D model
-batch_size: 1000
+batch_size: 500
 # epochs_per_step: 5  # number of training epochs for each step
 AUC_th: 0.8  # When the AUC reaches the threshold, interrupt the training
 # fid_log_interval: 500  # Log fid every 500 iterations

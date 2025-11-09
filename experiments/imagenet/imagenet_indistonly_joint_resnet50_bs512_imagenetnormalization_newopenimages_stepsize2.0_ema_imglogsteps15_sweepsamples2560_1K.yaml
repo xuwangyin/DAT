@@ -44,7 +44,6 @@ image_log:
 
   # Adaptive step selection
   adaptive_steps: true
-  step_sweep_range: null
   sweep_num_samples: 2560
 
 
