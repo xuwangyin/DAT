@@ -5,6 +5,7 @@ Converts the bash script for running FID evaluations on various datasets and mod
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,8 +28,14 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Basic usage with default 50K samples
   %(prog)s model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
+
+  # Override steps and batch size
   %(prog)s model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml --steps 20 --batch-size 500
+
+  # Use fewer samples for faster sweep (e.g., finding optimal steps)
+  %(prog)s model_configs/imagenet-at-ResNet50ImageNet-256x256.yaml --steps 15 -n 10000 -p mi2508x
         """,
     )
 
@@ -38,6 +45,14 @@ Examples:
 
     parser.add_argument(
         "--steps", type=int, help="Override number of steps for evaluation"
+    )
+
+    parser.add_argument(
+        "-n",
+        "--nsamples",
+        type=int,
+        default=50000,
+        help="Number of samples to generate for FID evaluation (default: 50000)",
     )
 
     parser.add_argument(
@@ -77,6 +92,12 @@ Examples:
         help="Skip evaluation if job already completed (default: always run)",
     )
 
+    parser.add_argument(
+        "--keep-samples",
+        action="store_true",
+        help="Keep generated images after FID computation",
+    )
+
     return parser.parse_args()
 
 
@@ -98,8 +119,8 @@ def load_fid_yaml_config(config_file: str) -> dict:
 
 
 def check_fid_job_completed(log_file: Path) -> bool:
-    """Check if FID job is already completed by looking for 'FID:' in log file."""
-    return check_job_completed(log_file, "FID:")
+    """Check if FID job is already completed by looking for completion marker in log file."""
+    return check_job_completed(log_file, "FID evaluation completed. FID:")
 
 
 def submit_job(
@@ -110,7 +131,9 @@ def submit_job(
     num_steps: int,
     model_type: str,
     batch_size: int = 1000,
+    num_samples: int = 50000,
     unconditional: bool = False,
+    keep_samples: bool = False,
     partition: str = None,
     python_bin: str = "python",
 ) -> bool:
@@ -123,7 +146,7 @@ def submit_job(
         "rebm.eval.eval_fid",
         template_config,  # Positional config file argument
         f"model.ckpt_path={ckpt_path}",
-        "image_log.num_samples=50000",
+        f"image_log.num_samples={num_samples}",
         f"image_log.num_steps={num_steps}",
         f"batch_size={batch_size}",
         f"model.model_type={model_type}",
@@ -132,6 +155,10 @@ def submit_job(
     # Add unconditional generation flag if specified
     if unconditional:
         python_cmd_parts.append("logsumexp_sampling=True")
+
+    # Add keep_samples flag if specified
+    if keep_samples:
+        python_cmd_parts.append("keep_samples=True")
 
     # Check if slurm is available and not forced to use local
     if partition == "local":
@@ -170,8 +197,17 @@ def submit_job(
             "--ntasks=1",
             f"--time={time_limit}",
             f"--partition={partition}",
-            f"--wrap={python_cmd_str}",
         ]
+
+        # Add email/SMS notifications if configured
+        mail_user = os.environ.get("SLURM_MAIL_USER")
+        if mail_user:
+            sbatch_cmd.extend([
+                f"--mail-user={mail_user}",
+                "--mail-type=BEGIN,END,FAIL,TIME_LIMIT",
+            ])
+
+        sbatch_cmd.append(f"--wrap={python_cmd_str}")
 
         try:
             subprocess.run(
@@ -222,7 +258,9 @@ def run_fid_evaluation_from_config(
     config_file: str,
     steps_override: int = None,
     batch_size: int = 1000,
+    num_samples: int = 50000,
     unconditional: bool = False,
+    keep_samples: bool = False,
     partition: str = None,
     skip_completed: bool = False,
     verbose: bool = True,
@@ -234,6 +272,7 @@ def run_fid_evaluation_from_config(
         config_file: Path to YAML model configuration file
         steps_override: Optional steps override
         batch_size: Batch size for evaluation (default: 1000)
+        num_samples: Number of samples to generate (default: 50000)
         unconditional: Enable unconditional generation using logsumexp sampling
         partition: SLURM partition to use (if None, uses automatic detection)
         skip_completed: Whether to skip if job already completed (default: False)
@@ -277,14 +316,20 @@ def run_fid_evaluation_from_config(
     config_name = Path(config_file).stem
     job_name = f"{dataset}_evalfid_{config_name}_steps{num_steps}"
 
+    # Add sample count to job name if not default 50K
+    if num_samples != 50000:
+        job_name += f"_{num_samples}samples"
+
     # Add unconditional to job name if specified
     if unconditional:
         job_name += "_unconditional"
 
     safe_job_name = sanitize_job_name(job_name)
 
-    # Generate log file name with unconditional suffix if specified
+    # Generate log file name with sample count and unconditional suffix if specified
     log_file_name = f"{config_name}_steps{num_steps}"
+    if num_samples != 50000:
+        log_file_name += f"_{num_samples}samples"
     if unconditional:
         log_file_name += "_unconditional"
     log_file_name += ".log"
@@ -296,7 +341,7 @@ def run_fid_evaluation_from_config(
         if verbose:
             print(f"Skipping {ckpt_path}")
             print(
-                "Reason: Job already completed successfully (found 'FID:' in log file)"
+                "Reason: Job already completed successfully (found 'FID evaluation completed' in log file)"
             )
         print(f"Log file: {log_file}")
         return 0, 1, 1
@@ -318,7 +363,9 @@ def run_fid_evaluation_from_config(
         num_steps,
         model_type,
         batch_size,
+        num_samples,
         unconditional,
+        keep_samples,
         partition,
     ):
         if verbose:
@@ -340,7 +387,9 @@ def main():
             config_file=args.config_file,
             steps_override=args.steps,
             batch_size=args.batch_size,
+            num_samples=args.nsamples,
             unconditional=args.unconditional,
+            keep_samples=args.keep_samples,
             partition=args.partition,
             skip_completed=args.skip_completed,
             verbose=True,

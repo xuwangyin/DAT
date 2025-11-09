@@ -233,8 +233,8 @@ def evaluate_and_log_fid(
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
-    fid = evaluate_image_generation(model_to_eval, cfg)
-    LOGGER.info(f"FID: {fid}, step: {global_step}, n_imgs: {n_imgs_seen}")
+    fid, gen_steps = evaluate_image_generation(model_to_eval, cfg)
+    LOGGER.info(f"FID: {fid}, gen_steps: {gen_steps}, step: {global_step}, n_imgs: {n_imgs_seen}")
 
     is_new_best = image_generation_metrics.update(fid)
     if is_new_best:
@@ -526,12 +526,14 @@ def train(cfg: TrainConfig):
                     )
                 else:
                     model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
-                evaluate_and_log_fid(
-                    model_to_eval,
-                    cfg,
-                    image_generation_metrics,
-                    global_step_one_indexed,
-                )
+
+                if cfg.image_log.log_fid:
+                    evaluate_and_log_fid(
+                        model_to_eval,
+                        cfg,
+                        image_generation_metrics,
+                        global_step_one_indexed,
+                    )
 
                 # Generate and log sample images
                 gen_imgs = log_generate_images(
@@ -613,7 +615,7 @@ def train(cfg: TrainConfig):
             )
 
             # Backpropagate combined loss and update weights
-            total_loss = ebm_metrics.loss + clf_loss
+            total_loss = ebm_metrics.ebm_total_loss + clf_loss
             total_loss.backward()
             optimizer.step()
 
@@ -649,8 +651,10 @@ def train(cfg: TrainConfig):
                 )
 
             if is_metric_logging_step and rank == 0:
+                metrics_to_log = dict_append_label(ebm_metrics.to_simple_dict(), "train_")
+                metrics_to_log["train_clf_loss"] = clf_loss.item()
                 wandb.log(
-                    dict_append_label(ebm_metrics.to_simple_dict(), "train_"),
+                    metrics_to_log,
                     step=n_imgs_seen,
                 )
 
