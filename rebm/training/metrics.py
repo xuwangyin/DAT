@@ -40,14 +40,14 @@ if TYPE_CHECKING:
 
 
 @dataclasses.dataclass
-class TrainingMetrics:
+class EBMMetrics:
     # AUC metrics
     clean_auc: float
     adv_auc: float
 
     # Loss metrics
-    clf_loss: torch.Tensor | None = None
-    loss: torch.Tensor | None = None
+    ebm_binary_loss: torch.Tensor | None = None
+    ebm_total_loss: torch.Tensor | None = None
     r1: torch.Tensor | None = None
 
     # Image tensors
@@ -177,7 +177,7 @@ def compute_ebm_metrics(
     criterion: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
     model: nn.Module,
     cfg: "TrainConfig",
-) -> TrainingMetrics:
+) -> EBMMetrics:
     """Compute metrics during training including loss, AUC, and R1 regularization."""
     model.eval()
     adv_imgs, attack_labels = generate_outdist_adv_images(
@@ -244,12 +244,12 @@ def compute_ebm_metrics(
     logits = torch.cat([indist_logits, adv_logits])
     targets = torch.cat([indist_target, adv_target])
 
-    clf_loss = criterion(logits, targets)
-    loss = clf_loss + cfg.r1reg * r1
+    ebm_binary_loss = criterion(logits, targets)
+    ebm_total_loss = ebm_binary_loss + cfg.r1reg * r1
 
     ret_metrics_dict = dict(
-        loss=loss,
-        clf_loss=clf_loss.detach().item(),
+        ebm_total_loss=ebm_total_loss,
+        ebm_binary_loss=ebm_binary_loss.detach().item(),
         r1=r1.detach().item() if isinstance(r1, torch.Tensor) else r1,
         l2_dist_relative=l2_dist_relative,
         indist_imgs=indist_imgs.detach(),
@@ -260,7 +260,7 @@ def compute_ebm_metrics(
         clean_auc=clean_auc,
     )
 
-    return TrainingMetrics(**ret_metrics_dict)
+    return EBMMetrics(**ret_metrics_dict)
 
 
 def compute_clf_adv_loss(
