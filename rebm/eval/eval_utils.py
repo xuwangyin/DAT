@@ -232,6 +232,143 @@ def find_optimal_steps(cfg, model: nn.Module) -> int:
         return cfg.image_log.num_steps
 
 
+def generate_class_conditional_samples(
+    cfg,
+    model: nn.Module,
+    target_class: int,
+    override_fid_cfg: Optional[dict] = None,
+) -> int:
+    """Generate samples for a specific target class (no FID computation).
+
+    This function generates a large number of samples conditioned on a single class,
+    useful for creating paper figures or qualitative analysis.
+
+    Args:
+        cfg: Training configuration
+        model: Model to use for generation
+        target_class: Class index to generate (e.g., 130 for flamingo in ImageNet)
+        override_fid_cfg: Optional override for image_log config
+
+    Returns:
+        Number of generation steps used
+    """
+    if override_fid_cfg is not None:
+        fid_cfg_dict = {**dataclasses.asdict(cfg.image_log), **override_fid_cfg}
+        fid_cfg = ImageLogConfig(**fid_cfg_dict)
+    else:
+        fid_cfg = cfg.image_log
+
+    batch_size = cfg.batch_size
+    num_workers = cfg.data.num_workers
+
+    savedir = fid_cfg.save_dir
+    pathlib.Path(savedir).mkdir(parents=True, exist_ok=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load OOD dataset for seed images
+    if os.path.isfile(fid_cfg.ood_data_dir):
+        ood_samples = torch.load(fid_cfg.ood_data_dir, weights_only=True)
+        ood_dataset = torch.utils.data.TensorDataset(ood_samples)
+    else:
+        transform = transforms.Compose([
+            transforms.Resize((cfg.data.image_size, cfg.data.image_size)),
+            transforms.ToTensor()
+        ])
+        ood_dataset = torchvision.datasets.ImageFolder(
+            fid_cfg.ood_data_dir, transform=transform
+        )
+
+    data_loader = torch.utils.data.DataLoader(
+        ood_dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False,
+    )
+
+    def save_image(image, idx, confidence):
+        filename = f"{confidence:.4f}_{idx:06d}.{fid_cfg.img_extension}"
+        to_pil_image(image).save(os.path.join(savedir, filename))
+
+    max_iters = math.ceil(fid_cfg.num_samples / batch_size)
+    total_samples = fid_cfg.num_samples
+
+    # All images target the specified class
+    all_attack_labels = torch.full(
+        (total_samples,), target_class, dtype=torch.long
+    )
+
+    LOGGER.info(f"Generating {total_samples} samples for class {target_class}")
+    LOGGER.info("Images will be saved with confidence-based filenames: {confidence:.4f}_{index:06d}.png")
+
+    # Track confidence statistics
+    all_confidences = []
+
+    for i, data in tqdm(
+        zip(range(max_iters), data_loader),
+        total=max_iters,
+        desc=f"Generating class {target_class} to {savedir}",
+    ):
+        seed_imgs = data[0] if isinstance(data, list) else data
+
+        samples_saved = i * batch_size
+        remaining_samples = min(batch_size, total_samples - samples_saved)
+
+        start_idx = i * batch_size
+        end_idx = start_idx + remaining_samples
+        attack_labels = all_attack_labels[start_idx:end_idx]
+        seed_imgs = seed_imgs[:remaining_samples]
+
+        gen_imgs = generate_images(
+            model=model,
+            x=seed_imgs.to(cfg.device),
+            attack_labels=attack_labels,
+            logsumexp=cfg.logsumexp_sampling,
+            **vars(fid_cfg),
+        )
+
+        # Compute classifier confidence on generated images
+        with torch.no_grad():
+            gen_logits = model(gen_imgs.to(cfg.device), y=None)
+            gen_probs = torch.nn.functional.softmax(gen_logits, dim=1)
+            # Extract confidence for the target class
+            confidences = gen_probs[:, target_class].cpu().numpy()
+
+        # Track confidences for statistics
+        all_confidences.extend(confidences.tolist())
+
+        # Save all images with confidence-based filenames
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            for j in range(remaining_samples):
+                confidence = confidences[j]
+                global_idx = samples_saved + j
+                executor.submit(save_image, gen_imgs[j], global_idx, confidence)
+
+    actual_samples = len(
+        list(pathlib.Path(savedir).glob(f"*.{fid_cfg.img_extension}"))
+    )
+    LOGGER.info(
+        f"Generated {actual_samples} samples for class {target_class} (requested: {fid_cfg.num_samples})"
+    )
+    LOGGER.info(f"Saved to: {savedir}")
+
+    # Log confidence statistics
+    if all_confidences:
+        import numpy as np
+        conf_array = np.array(all_confidences)
+        LOGGER.info(f"Confidence statistics for class {target_class}:")
+        LOGGER.info(f"  Mean: {conf_array.mean():.4f}")
+        LOGGER.info(f"  Std: {conf_array.std():.4f}")
+        LOGGER.info(f"  Min: {conf_array.min():.4f}")
+        LOGGER.info(f"  Max: {conf_array.max():.4f}")
+        LOGGER.info(f"  Median: {np.median(conf_array):.4f}")
+        LOGGER.info(f"  Images with confidence > 0.5: {(conf_array > 0.5).sum()} ({100 * (conf_array > 0.5).sum() / len(conf_array):.1f}%)")
+        LOGGER.info(f"  Images with confidence > 0.7: {(conf_array > 0.7).sum()} ({100 * (conf_array > 0.7).sum() / len(conf_array):.1f}%)")
+        LOGGER.info(f"  Images with confidence > 0.9: {(conf_array > 0.9).sum()} ({100 * (conf_array > 0.9).sum() / len(conf_array):.1f}%)")
+
+    return fid_cfg.num_steps
+
+
 def compute_fid(
     cfg,
     model: nn.Module,
@@ -248,10 +385,6 @@ def compute_fid(
     batch_size = cfg.batch_size
     num_workers = cfg.data.num_workers
     savedir = fid_cfg.save_dir
-
-    # Add target class to save directory if specified
-    if fid_cfg.target_class is not None:
-        savedir = f"{savedir}_class{fid_cfg.target_class}"
 
     pathlib.Path(savedir).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -283,15 +416,9 @@ def compute_fid(
     total_samples = fid_cfg.num_samples
 
     # Pre-generate all attack labels before the loop
-    if fid_cfg.target_class is not None:
-        # Use specified target class for all images
-        all_attack_labels = torch.full(
-            (total_samples,), fid_cfg.target_class, dtype=torch.long
-        )
-    else:
-        # Generate deterministic pattern for all samples at once
-        all_attack_labels = torch.arange(total_samples) % cfg.data.num_classes
-        all_attack_labels = all_attack_labels.long()
+    # Generate deterministic pattern for all samples at once
+    all_attack_labels = torch.arange(total_samples) % cfg.data.num_classes
+    all_attack_labels = all_attack_labels.long()
 
     # Initialize dictionaries to accumulate samples by class
     max_samples_per_class = 10  # Default max samples to collect for each class
@@ -350,8 +477,6 @@ def compute_fid(
             for j in range(remaining_samples):
                 executor.submit(save_image, gen_imgs[j], samples_saved + j)
 
-    if fid_cfg.target_class is not None:
-        return
     # Count actual generated samples
     actual_samples = len(
         list(pathlib.Path(savedir).glob(f"*.{fid_cfg.img_extension}"))

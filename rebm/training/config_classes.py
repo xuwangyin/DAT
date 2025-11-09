@@ -37,7 +37,6 @@ class ImageLogConfig:
     img_extension: Optional[str]
     num_samples: Optional[int]
     save_dir: Optional[str] = None
-    target_class: Optional[int] = None
 
     # Adaptive FID step selection
     adaptive_steps: bool = False  # Enable adaptive step selection

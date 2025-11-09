@@ -129,6 +129,8 @@ def create_log_directory(dataset: str, eval_type: str) -> Path:
         log_dir = Path(f"slurm_log/ood_detection/{dataset}")
     elif eval_type == "train":
         log_dir = Path(f"slurm_log/train/{dataset}")
+    elif eval_type == "class_gen":
+        log_dir = Path(f"slurm_log/class_gen/{dataset}")
     else:
         raise ValueError(f"Unsupported eval_type: {eval_type}")
 
