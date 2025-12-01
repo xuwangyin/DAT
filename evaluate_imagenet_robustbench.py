@@ -7,7 +7,12 @@ Evaluates a custom checkpoint against ImageNet using L2 threat model
 import argparse
 import math
 import os
+import sys
 
+# Use the local timm fork that adds normalize_input + layernorm knobs.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "pytorch-image-models"))
+
+import robustbench
 import torch
 from robustbench.eval import benchmark
 from robustbench.model_zoo.architectures.utils_architectures import (
@@ -16,9 +21,9 @@ from robustbench.model_zoo.architectures.utils_architectures import (
 from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
 from timm.models import create_model
 from timm.models.resnet import Bottleneck, _create_resnet
-from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
-import robustbench
+from torchvision import datasets, transforms
+from rebm.training.modeling import load_checkpoint
 from rebm.training.utils_architecture import create_convnext_model
 
 
@@ -52,9 +57,6 @@ def load_custom_model(checkpoint_path, architecture="resnet50"):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
     # Create base model architecture
     if architecture == "resnet50":
         model = create_model("resnet50", pretrained=False, num_classes=1000)
@@ -76,36 +78,8 @@ def load_custom_model(checkpoint_path, architecture="resnet50"):
     else:
         raise ValueError(f"Architecture {architecture} not supported yet")
 
-    # Load state dict - handle different checkpoint formats
-    if "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-        print("Found 'state_dict' key in checkpoint")
-    elif "model" in checkpoint:
-        state_dict = checkpoint["model"]
-        print("Found 'model' key in checkpoint")
-    else:
-        state_dict = checkpoint
-        print("Using checkpoint directly as state_dict")
-
-    # Remove module prefix if present
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        if key.startswith("module."):
-            new_key = key[7:]  # Remove 'module.' prefix
-        else:
-            new_key = key
-        new_state_dict[new_key] = value
-
-    # Load the state dict
-    try:
-        model.load_state_dict(new_state_dict, strict=True)
-        print("Loaded checkpoint with strict=True")
-    except RuntimeError as e:
-        print(f"Warning: Strict loading failed: {e}")
-        print("Trying with strict=False...")
-        model.load_state_dict(new_state_dict, strict=False)
-
-    return model
+    # Load checkpoint using shared utility (handles prefixes + DDP)
+    return load_checkpoint(model, checkpoint_path, weights_only=False)
 
 
 def main():
@@ -156,9 +130,10 @@ def main():
         help="Image size for preprocessing (e.g., 224 for 224x224, 256 for 256x256). Default: 224",
     )
     parser.add_argument(
-        "--no_normalization",
+        "--input_normalization",
         action="store_true",
-        help="Do not add ImageNet normalization (use for models trained without normalization, e.g., ConvNeXt)",
+        default=False,
+        help="Add ImageNet normalization wrapper (default: False, should never be used for DAT models)",
     )
 
     args = parser.parse_args()
@@ -167,14 +142,28 @@ def main():
     model = load_custom_model(args.checkpoint, args.architecture)
     model = model.eval()
 
-    # Add ImageNet normalization unless disabled
-    if not args.no_normalization:
+    # Verify normalization settings match model type expectations
+    if args.architecture in ["resnet50", "wide_resnet50_4"]:
+        # ResNet/WideResNet models should have internal normalization
+        assert hasattr(model, 'normalize_input') and model.normalize_input == True, \
+            f"{args.architecture} should have normalize_input=True (found: {getattr(model, 'normalize_input', 'N/A')})"
+    elif args.architecture == "convnext_large":
+        # ConvNeXt models should NOT have internal normalization
+        assert hasattr(model, 'normalize_input') and model.normalize_input == False, \
+            f"{args.architecture} should have normalize_input=False (found: {getattr(model, 'normalize_input', 'N/A')})"
+
+    # All DAT models should NOT use input normalization wrapper
+    assert args.input_normalization == False, \
+        "External input normalization must be disabled (--input_normalization should always be False)"
+
+    # Add ImageNet normalization if requested (should never happen for DAT models)
+    if args.input_normalization:
         mu = (0.485, 0.456, 0.406)
         sigma = (0.229, 0.224, 0.225)
         model = normalize_model(model, mu, sigma)
         print("Added ImageNet normalization layer")
     else:
-        print("Skipping normalization (--no_normalization specified)")
+        print("Skipping external normalization (models handle normalization appropriately)")
 
     model.eval()
     print("Model loaded and set to eval mode")

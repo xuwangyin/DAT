@@ -5,6 +5,7 @@ Converts the bash script for running robustness accuracy evaluations on various 
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,20 @@ Examples:
         type=int,
         default=200,
         help="Batch size for evaluation (default: 200)",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--threat-model",
+        type=str,
+        choices=["L2", "Linf"],
+        help="Override threat model from config (L2 or Linf)",
+    )
+
+    parser.add_argument(
+        "--eps",
+        type=float,
+        help="Override epsilon from config",
     )
 
     parser.add_argument(
@@ -184,6 +199,9 @@ def submit_job(
             # ImageNet robustness evaluation
             script_path = "evaluate_imagenet_robustbench.py"
 
+            # Get threat model from config, default to L2
+            threat_model = config.get("threat_model", "L2")
+
             python_cmd = [
                 python_bin,
                 "-u",
@@ -193,7 +211,7 @@ def submit_job(
                 "--data_dir",
                 "./data/ImageNet",
                 "--threat_model",
-                "L2",
+                threat_model,
                 "--eps",
                 str(pgd_epsilon),
                 "--n_examples",
@@ -207,10 +225,6 @@ def submit_job(
             # Add image size if specified in config, otherwise defaults to 224
             if "image_size" in config:
                 python_cmd.extend(["--img_size", str(config["image_size"])])
-
-            # Add --no_normalization for ConvNeXt models (they're trained without input normalization)
-            if model_type == "convnext_large":
-                python_cmd.append("--no_normalization")
     else:
         # Catch-all for unsupported datasets
         raise ValueError(
@@ -241,8 +255,17 @@ def submit_job(
             "--ntasks=1",
             f"--time={time_limit}",
             f"--partition={partition}",
-            f"--wrap={' '.join(python_cmd)}",
         ]
+
+        # Add email/SMS notifications if configured
+        mail_user = os.environ.get("SLURM_MAIL_USER")
+        if mail_user:
+            sbatch_cmd.extend([
+                f"--mail-user={mail_user}",
+                "--mail-type=BEGIN,END,FAIL,TIME_LIMIT",
+            ])
+
+        sbatch_cmd.append(f"--wrap={' '.join(python_cmd)}")
 
         try:
             subprocess.run(
@@ -295,6 +318,8 @@ def run_acc_evaluation_from_config(
     verbose: bool = True,
     calibration: bool = False,
     partition: str = None,
+    threat_model: str = None,
+    eps: float = None,
 ) -> tuple[int, int, int]:
     """
     Run accuracy evaluation using YAML configuration file.
@@ -305,6 +330,8 @@ def run_acc_evaluation_from_config(
         verbose: Whether to print progress messages
         calibration: Generate calibration analysis instead of robustness evaluation
         partition: SLURM partition to use (if None, uses automatic detection)
+        threat_model: Override threat model from config (L2 or Linf)
+        eps: Override epsilon from config
 
     Returns:
         Tuple of (submitted_count, skipped_count, total_jobs)
@@ -331,13 +358,21 @@ def run_acc_evaluation_from_config(
     # Extract checkpoint info
     ckpt_path = Path(config["checkpoint"])
     model_type = config["model_type"]
-    pgd_epsilon = config["pgd_epsilon"]
+    pgd_epsilon = eps if eps is not None else config["pgd_epsilon"]
+
+    # Override threat model if specified
+    if threat_model is not None:
+        config["threat_model"] = threat_model
 
     # Generate job name and log file from config file
     config_name = Path(config_file).stem
-    job_name = f"evalacc_{config_name}"
 
-    log_file = log_dir / f"{config_name}.log"
+    # Add threat model and eps to filename
+    threat = config.get("threat_model", "L2")
+    suffix = f"{threat}_eps{pgd_epsilon}"
+
+    job_name = f"evalacc_{config_name}_{suffix}"
+    log_file = log_dir / f"{config_name}_{suffix}.log"
 
     # Generate calibration save path if needed
     calibration_save_path = (
@@ -398,6 +433,8 @@ def main():
             verbose=True,
             calibration=args.calibration,
             partition=args.partition,
+            threat_model=args.threat_model,
+            eps=args.eps,
         )
     except (ValueError, FileNotFoundError) as e:
         print(f"Error: {e}")
