@@ -76,6 +76,7 @@ Examples:
         choices=[
             "mi3258x",
             "mi3008x",
+            "mi3008x_long",
             "mi2508x",
             "mi2104x",
             "devel",
@@ -136,6 +137,7 @@ def submit_job(
     keep_samples: bool = False,
     partition: str = None,
     python_bin: str = "python",
+    ood_data_dir: str = None,
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
@@ -151,6 +153,10 @@ def submit_job(
         f"batch_size={batch_size}",
         f"model.model_type={model_type}",
     ]
+
+    # Add ood_data_dir override if specified
+    if ood_data_dir is not None:
+        python_cmd_parts.append(f"image_log.ood_data_dir={ood_data_dir}")
 
     # Add unconditional generation flag if specified
     if unconditional:
@@ -311,6 +317,7 @@ def run_fid_evaluation_from_config(
     ckpt_path = Path(config["checkpoint"])
     template_config = config["fid_eval_config"]
     model_type = config["model_type"]
+    ood_data_dir = config.get("ood_data_dir", None)
 
     # Generate job name and log file from config file
     config_name = Path(config_file).stem
@@ -367,6 +374,7 @@ def run_fid_evaluation_from_config(
         unconditional,
         keep_samples,
         partition,
+        ood_data_dir=ood_data_dir,
     ):
         if verbose:
             print("Job submission complete.")

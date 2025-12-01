@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 # Import shared utilities
 from eval_utils import (
     TeeWriter,
@@ -47,6 +48,7 @@ Examples:
             "mi3258x",
             "mi3008x",
             "mi3008x_long",
+            "mi3001x",
             "mi2508x",
             "mi2104x",
             "devel",
@@ -79,6 +81,14 @@ Examples:
         help="WandB run ID for resuming training. If not provided with --requeue, a new ID is auto-generated",
     )
 
+    parser.add_argument(
+        "-t",
+        "--time",
+        type=str,
+        default=None,
+        help="SLURM job time limit (e.g., '24:00:00', '2-00:00:00'). If not specified, uses partition default.",
+    )
+
     return parser.parse_args()
 
 
@@ -107,6 +117,7 @@ def submit_job(
     python_bin: str = "python",
     requeue: bool = False,
     wandb_run_id: str = None,
+    custom_time_limit: str = None,
 ) -> bool:
     """Submit a job (SLURM if available, otherwise local) and return True if successful."""
 
@@ -129,7 +140,11 @@ def submit_job(
         if partition is None:
             partition = get_available_partition()
 
-        time_limit = get_partition_time_limit(partition)
+        # Use custom time limit if provided, otherwise use partition default
+        if custom_time_limit:
+            time_limit = custom_time_limit
+        else:
+            time_limit = get_partition_time_limit(partition)
 
         # Build environment variables for the command
         env_vars = []
@@ -150,14 +165,11 @@ def submit_job(
 
         train_cmd_str = " ".join(env_vars + train_cmd_parts)
 
-        # Use SLURM's %j placeholder for job ID in log filename
-        log_file_with_jobid = str(log_file).replace(".log", "-%j.log")
-
         # Build sbatch command
         sbatch_cmd = [
             "sbatch",
             f"--job-name={job_name}",
-            f"--output={log_file_with_jobid}",
+            f"--output={log_file}",
             "--nodes=1",
             "--ntasks=1",
             f"--time={time_limit}",
@@ -170,6 +182,14 @@ def submit_job(
             sbatch_cmd.extend([
                 "--requeue",  # Automatically requeue on node failure or timeout
                 "--open-mode=append",  # Append to log file instead of overwriting on requeue
+            ])
+
+        # Add email/SMS notifications if configured
+        mail_user = os.environ.get("SLURM_MAIL_USER")
+        if mail_user:
+            sbatch_cmd.extend([
+                f"--mail-user={mail_user}",
+                "--mail-type=BEGIN,END,FAIL,TIME_LIMIT",
             ])
 
         # Add the wrapped command at the end
@@ -230,6 +250,7 @@ def run_training_from_config(
     verbose: bool = True,
     requeue: bool = False,
     wandb_run_id: str = None,
+    custom_time_limit: str = None,
 ) -> bool:
     """
     Run training using YAML configuration file.
@@ -241,6 +262,7 @@ def run_training_from_config(
         verbose: Whether to print progress messages
         requeue: If True, enable SLURM --requeue for automatic resumption
         wandb_run_id: WandB run ID for resuming training (auto-generates if not provided with --requeue)
+        custom_time_limit: Custom SLURM time limit (e.g., '24:00:00')
 
     Returns:
         True if successful, False otherwise
@@ -283,7 +305,7 @@ def run_training_from_config(
         print(f"Submitting training job: {config_name}")
         print(f"WandB run name: {config_name}")
 
-    if submit_job(safe_job_name, log_file, config["train_cmd"], wandb_name=config_name, partition=partition, requeue=requeue, wandb_run_id=wandb_run_id):
+    if submit_job(safe_job_name, log_file, config["train_cmd"], wandb_name=config_name, partition=partition, requeue=requeue, wandb_run_id=wandb_run_id, custom_time_limit=custom_time_limit):
         if verbose:
             print("Job submission complete.")
         return True
@@ -305,6 +327,7 @@ def main():
             verbose=True,
             requeue=args.requeue,
             wandb_run_id=args.wandb_run_id,
+            custom_time_limit=args.time,
         )
         if not success:
             sys.exit(1)

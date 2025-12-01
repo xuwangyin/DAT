@@ -131,6 +131,8 @@ def create_log_directory(dataset: str, eval_type: str) -> Path:
         log_dir = Path(f"slurm_log/train/{dataset}")
     elif eval_type == "class_gen":
         log_dir = Path(f"slurm_log/class_gen/{dataset}")
+    elif eval_type == "corruptions":
+        log_dir = Path(f"slurm_log/corruptions/{dataset}")
     else:
         raise ValueError(f"Unsupported eval_type: {eval_type}")
 
@@ -141,7 +143,7 @@ def create_log_directory(dataset: str, eval_type: str) -> Path:
 def get_available_partition() -> str:
     """Return first available partition that is up and has idle nodes."""
     try:
-        for partition in ["mi3258x", "mi3008x", "mi2508x", "mi2104x"]:
+        for partition in ["mi3258x", "mi3008x", "mi3001x", "mi2508x", "mi2104x"]:
             result = subprocess.run(
                 ["sinfo", "-p", partition],
                 capture_output=True,

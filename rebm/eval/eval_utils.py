@@ -17,13 +17,14 @@ import torch.utils.data
 import torchvision
 import torchvision.transforms as transforms
 from sklearn import metrics
-from torchvision.transforms.functional import to_pil_image
+from torchvision.transforms.functional import gaussian_blur, rgb_to_grayscale, to_pil_image
 from tqdm import tqdm
 
 from rebm.attacks.attack_steps import L2Step, LinfStep
 from rebm.training.config_classes import ImageLogConfig
 
-sys.path.insert(0, "pytorch-fid/src")
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "pytorch-fid" / "src"))
 from pytorch_fid.fid_score import calculate_fid_given_paths
 
 from rebm.attacks.adv_attacks import adam_attack, pgd_attack, pgd_attack_xent
@@ -76,6 +77,7 @@ def generate_images(
     lr: float = None,
     eps: float = None,
     step_size: float = None,
+    norm: str = "L2",
     logsumexp=False,
     **kwargs,
 ):
@@ -95,7 +97,7 @@ def generate_images(
             model=model,
             x=x,
             attack_labels=attack_labels,
-            norm="L2",
+            norm=norm,
             eps=eps,  # infinity
             step_size=step_size,
             steps=num_steps,
@@ -318,6 +320,14 @@ def generate_class_conditional_samples(
         end_idx = start_idx + remaining_samples
         attack_labels = all_attack_labels[start_idx:end_idx]
         seed_imgs = seed_imgs[:remaining_samples]
+
+        # Apply Gaussian blur to seed images if configured
+        if fid_cfg.blur_kernel_size > 0:
+            assert False
+            seed_imgs = gaussian_blur(
+                seed_imgs,
+                kernel_size=[fid_cfg.blur_kernel_size, fid_cfg.blur_kernel_size]
+            )
 
         gen_imgs = generate_images(
             model=model,
