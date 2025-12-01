@@ -222,7 +222,8 @@ def compute_ebm_metrics(
     adv_target = torch.zeros(indist_imgs.shape[0]).to(indist_imgs.device)
 
     model.train()
-    if cfg.r1reg > 0:
+    # Compute R1 only if using it in loss (r1reg > 0) or tracking it (track_r1=True)
+    if cfg.r1reg > 0 or cfg.track_r1:
         indist_imgs.requires_grad_()
         if cfg.logsumexp:
             indist_logits = torch.logsumexp(model(x=indist_imgs, y=None), dim=1)
@@ -281,7 +282,7 @@ def compute_clf_adv_loss(
         model,
         indist_imgs,
         indist_labels,
-        norm="L2",
+        norm=cfg.indist_attack_clf.norm,
         eps=cfg.indist_attack_clf.eps,
         step_size=cfg.indist_attack_clf.step_size,
         steps=cfg.indist_attack_clf.max_steps,

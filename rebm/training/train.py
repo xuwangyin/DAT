@@ -6,11 +6,12 @@ import os
 import signal
 import sys
 from datetime import timedelta
-from pathlib import Path
 from typing import Iterable
+from pathlib import Path
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-sys.path.insert(0, "pytorch-image-models")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "pytorch-image-models"))
 
 import numpy as np
 import torch
@@ -294,7 +295,7 @@ def evaluate_and_log_accuracy(
     if cfg.robust_eval:
         LOGGER.info("Evaluating robust accuracy...")
         attack_kwargs = {
-            "norm": "L2",
+            "norm": cfg.indist_attack_clf.norm,
             "eps": cfg.indist_attack_clf.eps,
             "step_size": cfg.indist_attack_clf.step_size,
             "steps": cfg.indist_attack_clf.max_steps,
@@ -527,6 +528,10 @@ def train(cfg: TrainConfig):
                 else:
                     model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
 
+                # Set model to eval mode before any evaluation (FID or image generation)
+                model_to_eval.eval()
+                # TODO: Remove redundant model_to_eval.eval() call inside evaluate_and_log_fid() at line 234
+
                 if cfg.image_log.log_fid:
                     evaluate_and_log_fid(
                         model_to_eval,
@@ -649,6 +654,8 @@ def train(cfg: TrainConfig):
                     f"train_clean_auc_mean: {np.mean(train_clean_auc_deque):.2f}, "
                     f"{metrics_str}"
                 )
+                # Save training state periodically
+                save_state()
 
             if is_metric_logging_step and rank == 0:
                 metrics_to_log = dict_append_label(ebm_metrics.to_simple_dict(), "train_")

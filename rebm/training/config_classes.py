@@ -22,6 +22,7 @@ class AttackConfig:
     # PGD-specific attack parameters
     step_size: Optional[float] = None
     eps: Optional[float] = None
+    norm: Literal["L2", "Linf"] = "L2"  # Norm type for PGD attack (L2 or Linf)
 
 
 @dataclass
@@ -47,6 +48,9 @@ class ImageLogConfig:
     lr: Optional[float] = None  # only for Adam
     step_size: Optional[float] = None  # only for PGD
     eps: Optional[float | int] = None  # only for PGD
+    norm: Literal["L2", "Linf"] = "L2"  # Norm type for PGD attack (L2 or Linf)
+    blur_kernel_size: int = 0  # Gaussian blur kernel size for seed images (0=no blur, use odd numbers like 5, 7, 11)
+    adaptive_blur: bool = False  # Adaptively determine blur kernel size based on image content
 
     def __post_init__(self):
         if self.save_dir is None:
@@ -156,6 +160,7 @@ class TrainConfig:
     # Evaluation parameters
     robust_eval: bool = True
     keep_samples: bool = False
+    track_r1: bool = False  # Compute R1 for tracking (expensive, only enable if needed)
     indist_perturb: bool = False
     indist_perturb_steps: int = 10
     indist_perturb_eps: float = 0.5

@@ -1,15 +1,16 @@
 """Model creation, loading, and checkpoint management."""
 
+import os
 import dataclasses
 import logging
-import os
 import sys
 from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
 # Add pytorch-image-models to path for timm imports
-sys.path.insert(0, "pytorch-image-models")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "pytorch-image-models"))
 
 import torch
 import torch.distributed as dist
@@ -33,6 +34,20 @@ from rebm.training.config_classes import BaseModelConfig, TrainConfig
 from rebm.training.metrics import ClassificationMetrics, ImageGenerationMetrics
 
 LOGGER = logging.getLogger(__name__)
+
+
+def log_model_parameters(model: nn.Module, model_type: str) -> None:
+    """Log the number of parameters in a model.
+
+    Args:
+        model: The model to count parameters for
+        model_type: Name of the model type for logging
+    """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    LOGGER.info(f"Model: {model_type}")
+    LOGGER.info(f"Total parameters: {total_params / 1e6:.2f}M ({total_params:,})")
+    LOGGER.info(f"Trainable parameters: {trainable_params / 1e6:.2f}M ({trainable_params:,})")
 
 
 def load_checkpoint(
@@ -126,6 +141,9 @@ def get_model(
             use_batchnorm=model_config.use_batchnorm,
         ).to(device)
 
+        # Count and log model parameters
+        log_model_parameters(model, model_type)
+
         # Wrap model with DDP or DataParallel
         if use_ddp:
             # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
@@ -159,11 +177,7 @@ def get_model(
         model = model.to(device)
 
         # Count and log model parameters
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        LOGGER.info(f"Model: {model_type}")
-        LOGGER.info(f"Total parameters: {total_params / 1e6:.2f}M ({total_params:,})")
-        LOGGER.info(f"Trainable parameters: {trainable_params / 1e6:.2f}M ({trainable_params:,})")
+        log_model_parameters(model, model_type)
 
         # Wrap model with DDP or DataParallel
         if use_ddp:
@@ -191,6 +205,9 @@ def get_model(
             normalize_input=model_config.normalize_input,
             use_batchnorm=model_config.use_batchnorm,
         ).to(device)
+
+        # Count and log model parameters
+        log_model_parameters(model, model_type)
 
         # Wrap model with DDP or DataParallel
         if use_ddp:
