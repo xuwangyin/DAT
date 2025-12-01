@@ -5,7 +5,11 @@ method: "dat"
 dataset: cifar10
 checkpoint: wandb/robust-ebms-2/wandb/run-20250506_140002-4oni26z2/files/model_bestfid.pth
 model_type: WideResNet34x10
-train_cmd: "python -m rebm.training.train experiments/cifar10/cifar10_conditional_r1reg0_augauto_innoutloader_steps40_bs128_indistxent_sgd_lr0.001_stesp50_wd_wrn3410_indistaugoriginal_innoutpretrained_mean0_bestavg_ema_logsumexp_seed1.yaml"
+train_cmd: >
+  python -m rebm.training.train
+  experiments/cifar10/cifar10_conditional_r1reg0_augauto_innoutloader_steps40_bs128_indistxent_sgd_lr0.001_stesp50_wd_wrn3410_indistaugoriginal_innoutpretrained_mean0_bestavg_ema_logsumexp_seed1.yaml
+  rand_seed=0
+  image_log.log_fid=true
 
 # FID evaluation configuration
 fid_eval_config: experiments/cifar10/eval_fid/cifar10_conditional_wrn3410_eval_fid_steps33.yaml

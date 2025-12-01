@@ -14,6 +14,7 @@ train_cmd: >
 # FID evaluation configuration
 fid_eval_config: experiments/imagenet/imagenet_indistonly_joint_resnet50timm_fid_50Ksamples_newopenimages.yaml
 fid_num_steps: 14
+ood_data_dir: ./data/OpenImage-O-large/fid_eval
 
 # Robust accuracy evaluation configuration
 pgd_epsilon: 3.0

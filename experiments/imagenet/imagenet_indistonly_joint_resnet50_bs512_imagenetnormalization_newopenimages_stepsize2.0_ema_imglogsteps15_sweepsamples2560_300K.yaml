@@ -35,7 +35,7 @@ image_log:
   attack_type: "pgd"
   num_steps: 15
   step_size: 8
-  eps: 10000
+  eps: .inf
   log_fid: true # TODO
   data_dir: "./data/fid_stats/imagenet_train_stats.npz" # TODO note restrictedimagenet is highly inbalnaced, we could use balacned sampling
   ood_data_dir: "./data/OpenImage-O-large/fid_eval"
