@@ -29,12 +29,14 @@ Model configuration files are located in `model_configs/` and specify the model 
 | CIFAR-100 RATIO | `cifar100-ratio-WideResNet34x10.yaml` |
 | CIFAR-100 DAT (T=45) | `cifar100-dat-WideResNet34x10-T45-seed0.yaml` |
 | CIFAR-100 DAT (T=50) | `cifar100-dat-WideResNet34x10-T50.yaml` |
-| ImageNet standard AT ResNet50 | `imagenet-at-ResNet50ImageNet.yaml` |
-| ImageNet standard AT WideResNet50x4 | `imagenet-at-WideResNet50x4ImageNet.yaml` |
-| ImageNet DAT ResNet50 (T=15) | `imagenet-dat-ResNet50ImageNet-T15-300K-seed0.yaml` |
-| ImageNet DAT ResNet50 (T=30) | `imagenet-dat-ResNet50ImageNet-T30.yaml` |
-| ImageNet DAT WideResNet50x4 (T=30) | `imagenet-dat-WideResNet50x4ImageNet-T30.yaml` |
-| ImageNet DAT WideResNet50x4 (T=65) | `imagenet-dat-WideResNet50x4ImageNet-T65.yaml` |
+| ImageNet standard AT ResNet50 | `imagenet-at-ResNet50ImageNet-256x256.yaml` |
+| ImageNet standard AT WideResNet50x4 | `imagenet-at-WideResNet50x4ImageNet-256x256.yaml` |
+| ImageNet standard AT ConvNeXtLarge | `imagenet-at-ConvNeXtLarge-convst-256x256.yaml` |
+| ImageNet DAT ResNet50 (T=15) | `imagenet-dat-ResNet50ImageNet-T15-256x256.yaml` |
+| ImageNet DAT ResNet50 (T=30) | `imagenet-dat-ResNet50ImageNet-T30-256x256.yaml` |
+| ImageNet DAT WideResNet50x4 (T=30) | `imagenet-dat-WideResNet50x4ImageNet-T30-256x256.yaml` |
+| ImageNet DAT WideResNet50x4 (T=65) | `imagenet-dat-WideResNet50x4ImageNet-T65-256x256.yaml` |
+| ImageNet DAT ConvNeXtLarge | `imagenet-dat-ConvNeXtLarge-convst-256x256-stepsize3_lr0.0003.yaml` |
 
 ## Model Training
 
