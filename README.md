@@ -13,7 +13,7 @@ micromamba env create -f packages.yaml
 - **OpenImages-O-large**: Setup according to `data/OpenImage-O-large/README.md`
 - **ImageNet**: Setup ImageNet dataset to `data/ImageNet/`, which should contain: `ILSVRC2012_devkit_t12.tar.gz`, `test/`, `train/`, `val/`
 - **Tiny Images**: Download [tiny_images.bin](http://www.archive.org/download/80-million-tiny-images-2-of-2/tiny_images.bin) to `./data/`
-- **Model checkpoints and FID data**: Download the folders under [this Dropbox folder](https://www.dropbox.com/scl/fo/81n3lxw5dvhds56guuegh/AN3sYMNamKQnCkkFXC3CKcg?rlkey=ih9m3rasrmuzeyxwe7qjcpue9&st=b3a1r2nz&dl=0) and place them under the project directory
+- **Model checkpoints and FID data**: Download the folders under [this Google Drive folder](https://drive.google.com/drive/folders/1R05c2GJYigc38HPmgavuKH3YHsPeSBjP) and place them under the project directory
 
 ## Model Configuration Files
 
