@@ -1,6 +1,6 @@
 #!/bin/bash
 # Setup script to download and extract datasets and model checkpoints using rclone
-# Requires: rclone configured with gdrive and dropbox remotes
+# Requires: rclone configured with a gdrive remote
 
 set -e  # Exit on error
 
@@ -90,10 +90,10 @@ setup_imagenet() {
 }
 
 setup_checkpoints_and_fid() {
-    echo "Downloading FID data and model checkpoints from Dropbox..."
-    echo "Copying everything from dropbox:robust-ebms-2/ to project directory..."
+    echo "Downloading FID data and model checkpoints from Google Drive..."
+    echo "Copying everything from gdrive:Dropbox-archive-2026-07-31/robust-ebms-2/ to project directory..."
 
-    rclone copy dropbox:robust-ebms-2/ ./ --transfers=4 -P
+    rclone copy gdrive:Dropbox-archive-2026-07-31/robust-ebms-2/ ./ --transfers=4 -P
 
     echo "Checkpoints and FID data setup complete!"
 }
@@ -115,11 +115,6 @@ main() {
     # Check if remotes are configured
     if ! rclone listremotes | grep -q "gdrive:"; then
         echo "Warning: gdrive remote not configured in rclone"
-        echo "Please configure it with: rclone config"
-    fi
-
-    if ! rclone listremotes | grep -q "dropbox:"; then
-        echo "Warning: dropbox remote not configured in rclone"
         echo "Please configure it with: rclone config"
     fi
 
