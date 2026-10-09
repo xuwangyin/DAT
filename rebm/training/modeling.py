@@ -31,6 +31,7 @@ import rebm.models.wide_resnet_innoutrobustness
 import rebm.training.misc
 from rebm.training.average_model import AveragedModel
 from rebm.training.config_classes import BaseModelConfig, TrainConfig
+from rebm.training.distributed import wrap_training_model
 from rebm.training.metrics import ClassificationMetrics, ImageGenerationMetrics
 
 LOGGER = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ def get_model(
         num_classes: Number of output classes
         indist_dataset: Name of in-distribution dataset for normalization
         use_ddp: Whether to use DistributedDataParallel
-        rank: Rank for DDP
+        rank: Global rank (retained for caller compatibility, not a CUDA ordinal)
 
     Returns:
         Initialized model (wrapped in DataParallel or DDP)
@@ -145,12 +146,7 @@ def get_model(
         log_model_parameters(model, model_type)
 
         # Wrap model with DDP or DataParallel
-        if use_ddp:
-            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
-            # "modified by an inplace operation" errors in autograd
-            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
-        else:
-            model = nn.DataParallel(model)
+        model = wrap_training_model(model, device, use_ddp)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
@@ -180,12 +176,7 @@ def get_model(
         log_model_parameters(model, model_type)
 
         # Wrap model with DDP or DataParallel
-        if use_ddp:
-            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
-            # "modified by an inplace operation" errors in autograd
-            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
-        else:
-            model = nn.DataParallel(model)
+        model = wrap_training_model(model, device, use_ddp)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
@@ -210,12 +201,7 @@ def get_model(
         log_model_parameters(model, model_type)
 
         # Wrap model with DDP or DataParallel
-        if use_ddp:
-            # broadcast_buffers=False prevents BatchNorm buffer sync issues that cause
-            # "modified by an inplace operation" errors in autograd
-            model = DDP(model, device_ids=[rank], broadcast_buffers=False)
-        else:
-            model = nn.DataParallel(model)
+        model = wrap_training_model(model, device, use_ddp)
 
         # Load checkpoint if specified
         if model_config.ckpt_path is not None:
@@ -362,7 +348,9 @@ def save_training_state(
     # This allows resumption with a stable path across multiple resume attempts
     save_path = get_training_state_path(cfg.wandb_dir, cfg.wandb_project, wandb.run.id)
     Path(os.path.dirname(save_path)).mkdir(parents=True, exist_ok=True)
-    torch.save(state, save_path)
+    # Offline readers must see a complete checkpoint, even while training saves.
+    torch.save(state, save_path + ".tmp")
+    os.replace(save_path + ".tmp", save_path)
 
     LOGGER.info(f"Saved training state to {save_path}")
     return save_path

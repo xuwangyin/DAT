@@ -5,7 +5,6 @@ import math
 import os
 import signal
 import sys
-from datetime import timedelta
 from typing import Iterable
 from pathlib import Path
 
@@ -20,7 +19,6 @@ import torch.utils.data
 import torchvision.utils
 import wandb
 from torch import nn
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 import rebm.training.data
 import rebm.training.misc
@@ -33,6 +31,12 @@ from rebm.eval.eval_utils import (
 )
 from rebm.training.average_model import AveragedModel
 from rebm.training.config_classes import TrainConfig, load_train_config
+from rebm.training.distributed import (
+    any_rank_requests_stop,
+    initialize_distributed,
+    run_rank_zero,
+)
+from rebm.training.evaluation import evaluation_model, unwrap_model
 from rebm.training.metrics import (
     ClassificationMetrics,
     ImageGenerationMetrics,
@@ -58,7 +62,7 @@ class Dataloaders:
     indist_iter_ebm: Iterable
     indist_iter_clf: Iterable
     outdist_iter: Iterable
-    test_loader: torch.utils.data.DataLoader
+    test_loader: torch.utils.data.DataLoader | None
 
 
 def infinite_iter(iterable: Iterable):
@@ -81,18 +85,13 @@ def average_metric_across_ranks(value: float, device: torch.device, world_size: 
 def setup_distributed(cfg: TrainConfig) -> tuple[int, int, torch.device]:
     """Setup distributed training environment.
 
-    Note: When using DDP, process group is initialized in __main__ before this function.
-
     Returns:
         tuple: (rank, world_size, device)
     """
     if cfg.use_ddp:
+        device = initialize_distributed(cfg.ddp_backend)
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-
-        # Set device for this process
-        torch.cuda.set_device(rank)
-        device = torch.device(f"cuda:{rank}")
 
         if rank == 0:
             LOGGER.info(f"Initialized DDP with {world_size} processes")
@@ -173,16 +172,18 @@ def create_dataloaders(cfg: TrainConfig, rank: int = 0, world_size: int = 1) -> 
             world_size=world_size,
         )
     )
-    test_loader_for_eval = rebm.training.data.get_indist_dataloader(
-        config=cfg.data,
-        batch_size=per_device_batch_size,
-        split="val",
-        shuffle=False,
-        augm_type="none" if "cifar" in cfg.data.indist_dataset else "test",
-        use_ddp=cfg.use_ddp,
-        rank=rank,
-        world_size=world_size,
-    )
+    # Only rank zero evaluates, so it needs the complete validation set.
+    # Do not allocate validation workers/data on idle ranks or in offline mode.
+    test_loader_for_eval = None
+    if rank == 0 and cfg.n_imgs_per_evaluation_log is not None and cfg.data.num_classes > 1:
+        test_loader_for_eval = rebm.training.data.get_indist_dataloader(
+            config=cfg.data,
+            batch_size=per_device_batch_size,
+            split="val",
+            shuffle=False,
+            augm_type="none" if "cifar" in cfg.data.indist_dataset else "test",
+            use_ddp=False,
+        )
 
     return Dataloaders(
         indist_loader_ebm=train_indist_loader,
@@ -219,6 +220,7 @@ def evaluate_and_log_fid(
     cfg: TrainConfig,
     image_generation_metrics: ImageGenerationMetrics,
     global_step: int,
+    generation_cfg: TrainConfig | None = None,
 ) -> None:
     """Evaluate FID and save best model if improved.
 
@@ -229,19 +231,18 @@ def evaluate_and_log_fid(
         cfg: Training configuration
         image_generation_metrics: Metrics tracker for image generation
         global_step: Current global step (1-indexed)
+        generation_cfg: Optional single-device batch configuration for generation
     """
 
     model_to_eval.eval()
     n_imgs_seen = global_step * cfg.batch_size
 
-    fid, gen_steps = evaluate_image_generation(model_to_eval, cfg)
+    fid, gen_steps = evaluate_image_generation(model_to_eval, generation_cfg or cfg)
     LOGGER.info(f"FID: {fid}, gen_steps: {gen_steps}, step: {global_step}, n_imgs: {n_imgs_seen}")
 
     is_new_best = image_generation_metrics.update(fid)
     if is_new_best:
-        model_to_save = (
-            model_to_eval.module.module if cfg.use_ema else model_to_eval.module
-        )
+        model_to_save = unwrap_model(model_to_eval)
         LOGGER.info(
             f"Saving {'EMA' if cfg.use_ema else 'regular'} model with best FID"
         )
@@ -277,8 +278,7 @@ def evaluate_and_log_accuracy(
     n_imgs_seen = global_step * cfg.batch_size
 
     LOGGER.info("Evaluating standard accuracy...")
-    # Get device from config's device property (which will use cuda:0 by default)
-    eval_device = cfg.device
+    eval_device = next(model_to_eval.parameters()).device
     test_acc = eval_acc(
         model=model_to_eval,
         dataloader=test_loader_for_eval,
@@ -321,15 +321,54 @@ def evaluate_and_log_accuracy(
         robust_test_acc=robust_test_acc,
     )
     if is_new_best_acc:
-        model_to_save = (
-            model_to_eval.module.module if cfg.use_ema else model_to_eval.module
-        )
+        model_to_save = unwrap_model(model_to_eval)
         rebm.training.modeling.save_best_accuracy_model(model_to_save)
 
     wandb.log(
         dataclasses.asdict(classification_metrics),
         step=n_imgs_seen,
     )
+
+
+def evaluate_training_model(
+    model: nn.Module,
+    ema_model: nn.Module | None,
+    cfg: TrainConfig,
+    world_size: int,
+    test_loader,
+    image_generation_metrics: ImageGenerationMetrics,
+    classification_metrics: ClassificationMetrics,
+    global_step: int,
+) -> None:
+    """Rank-zero evaluation body; never call distributed collectives here."""
+    # batch_size is global for training, but DDP evaluation owns only one GPU.
+    # Keep the original cfg for image counts, logging, and checkpoint metadata.
+    eval_cfg = dataclasses.replace(cfg, batch_size=cfg.batch_size // world_size)
+    with evaluation_model(model, ema_model, cfg.use_ddp) as model_to_eval:
+        if cfg.image_log.log_fid:
+            # Generation uses eval_cfg; logging must still count global images.
+            evaluate_and_log_fid(
+                model_to_eval,
+                cfg,
+                image_generation_metrics,
+                global_step,
+                generation_cfg=eval_cfg,
+            )
+
+        gen_imgs = log_generate_images(
+            cfg=eval_cfg, model=model_to_eval, samples=min(10, eval_cfg.batch_size)
+        )
+        log_image_grid("train_gen_imgs", gen_imgs, cfg, global_step * cfg.batch_size)
+        del gen_imgs
+
+        if cfg.data.num_classes > 1:
+            evaluate_and_log_accuracy(
+                model_to_eval,
+                cfg,
+                test_loader,
+                classification_metrics,
+                global_step,
+            )
 
 
 def train(cfg: TrainConfig):
@@ -371,7 +410,7 @@ def train(cfg: TrainConfig):
     )
     if cfg.use_ema:
         # EMA model wraps the underlying model (before DDP wrapper)
-        base_model = model.module if cfg.use_ddp else model.module
+        base_model = unwrap_model(model)
         ema_model = AveragedModel(
             base_model,
             avg_type="ema",
@@ -449,9 +488,7 @@ def train(cfg: TrainConfig):
     # SLURM sends SIGTERM/SIGUSR1 before killing the job
     # Register handler to save checkpoint when signal is received
     def slurm_timeout_handler(signum, frame):
-        if rank == 0:
-            LOGGER.warning(f"Received signal {signum}. SLURM timeout imminent, saving training state...")
-            slurm_timeout_flag["triggered"] = True
+        slurm_timeout_flag["triggered"] = True
 
     # Register signal handlers (SLURM typically sends SIGTERM or SIGUSR1)
     signal.signal(signal.SIGTERM, slurm_timeout_handler)
@@ -509,86 +546,36 @@ def train(cfg: TrainConfig):
                 )
             )
 
-            # Save training state BEFORE expensive evaluations
-            # This ensures we have a checkpoint even if killed during FID/accuracy eval
-            if is_evaluation_step and rank == 0:
-                LOGGER.info("Saving training state before evaluation...")
-                save_state()
-
-            if is_evaluation_step and rank == 0:
-                model.zero_grad()
-                # In DDP mode, wrap model with DataParallel using all available GPUs
-                # This gives ~8x speedup for FID evaluation vs single GPU
-                if cfg.use_ddp and torch.cuda.device_count() > 1:
-                    base_model = ema_model if cfg.use_ema else model.module
-                    model_to_eval = nn.DataParallel(
-                        base_model,
-                        device_ids=list(range(torch.cuda.device_count()))
-                    )
-                else:
-                    model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
-
-                # Set model to eval mode before any evaluation (FID or image generation)
-                model_to_eval.eval()
-                # TODO: Remove redundant model_to_eval.eval() call inside evaluate_and_log_fid() at line 234
-
-                if cfg.image_log.log_fid:
-                    evaluate_and_log_fid(
-                        model_to_eval,
+            if is_evaluation_step:
+                def evaluate_and_save():
+                    LOGGER.info("Saving training state before evaluation...")
+                    save_state()
+                    model.zero_grad(set_to_none=True)
+                    evaluate_training_model(
+                        model,
+                        ema_model if cfg.use_ema else None,
                         cfg,
+                        world_size,
+                        test_loader,
                         image_generation_metrics,
+                        classification_metrics,
                         global_step_one_indexed,
                     )
+                    # Persist updated best metrics before any rank resumes.
+                    save_state()
 
-                # Generate and log sample images
-                gen_imgs = log_generate_images(
-                    cfg=cfg,
-                    model=model_to_eval,
-                    samples=10,
-                )
-                log_image_grid("train_gen_imgs", gen_imgs, cfg, n_imgs_seen)
-
-                # Synchronize all ranks after FID evaluation and image logging
-                if cfg.use_ddp:
-                    dist.barrier()
-
-            if is_evaluation_step and cfg.data.num_classes > 1 and rank == 0:
-                model.eval()
-                model.zero_grad()
-                # In DDP mode, wrap model with DataParallel using all available GPUs
-                # This gives ~8x speedup for accuracy evaluation vs single GPU
-                if cfg.use_ddp and torch.cuda.device_count() > 1:
-                    base_model = ema_model if cfg.use_ema else model.module
-                    model_to_eval = nn.DataParallel(
-                        base_model,
-                        device_ids=list(range(torch.cuda.device_count()))
-                    )
-                else:
-                    model_to_eval = nn.DataParallel(ema_model) if cfg.use_ema else model
-                evaluate_and_log_accuracy(
-                    model_to_eval,
-                    cfg,
-                    test_loader,
-                    classification_metrics,
-                    global_step_one_indexed,
-                )
-                # Synchronize all ranks after accuracy evaluation
-                if cfg.use_ddp:
-                    dist.barrier()
-
-            # Update metrics after evaluation (FID and accuracy may have changed)
-            if is_evaluation_step and rank == 0:
-                save_state()
+                run_rank_zero(evaluate_and_save, use_ddp=cfg.use_ddp, device=device)
 
             # Check for SLURM timeout signal
-            if slurm_timeout_flag["triggered"]:
-                if rank == 0:
+            if any_rank_requests_stop(
+                slurm_timeout_flag["triggered"], use_ddp=cfg.use_ddp, device=device
+            ):
+                def save_before_exit():
                     LOGGER.warning("SLURM timeout signal received. Saving final training state and exiting...")
                     save_state()
                     LOGGER.info("Training state saved. Exiting gracefully before SLURM timeout.")
-                # Exit the training loop
-                if cfg.use_ddp:
-                    dist.barrier()  # Synchronize all ranks before exit
+
+                run_rank_zero(save_before_exit, use_ddp=cfg.use_ddp, device=device)
                 return
 
             outdist_imgs = next(outdist_iter)[0].to(device)
@@ -751,13 +738,7 @@ if __name__ == "__main__":
     # Initialize wandb only on rank 0 to avoid multiple runs
     # When using DDP, we need to initialize the process group first
     if cfg.use_ddp:
-        # In DDP mode with torchrun, only init wandb on rank 0
-        # We need to initialize the process group first to get the rank
-        if not dist.is_initialized():
-            # Set a longer timeout for operations like FID evaluation and image logging
-            # which can take 60+ minutes with step sweeping
-            timeout = timedelta(minutes=90)
-            dist.init_process_group(backend=cfg.ddp_backend, timeout=timeout)
+        initialize_distributed(cfg.ddp_backend)
         rank = dist.get_rank()
     else:
         # Single GPU or DataParallel mode
@@ -815,4 +796,15 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.benchmark = True
 
-    train(cfg)
+    if cfg.use_ddp:
+        # Rank zero may have selected an automatic resume checkpoint above.
+        # Every rank must restore the same step before scheduling evaluation.
+        resume_paths = [cfg.resume_from_state]
+        dist.broadcast_object_list(resume_paths, src=0)
+        cfg.resume_from_state = resume_paths[0]
+
+    try:
+        train(cfg)
+    finally:
+        if cfg.use_ddp and dist.is_initialized():
+            dist.destroy_process_group()

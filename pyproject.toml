@@ -13,6 +13,12 @@ dynamic = ["version"]
 [tool.setuptools]
 packages = ["rebm"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "distributed: real multi-process test requiring local socket access (CPU/Gloo, no GPUs)",
+]
+
 [tool.ruff]
 target-version = "py311"
 extend-include = ["*.ipynb"]

@@ -53,6 +53,13 @@ python train.py model_configs/cifar10-dat-WideResNet34x10-T40-seed0.yaml
 
 ## Model Evaluation
 
+**DDP evaluation status:** issue [#3](https://github.com/xuwangyin/DAT/issues/3)
+reports NCCL timeouts in the previous in-training evaluation path. The proposed
+rank/device changes still require multi-GPU validation. For production runs,
+keep `n_imgs_per_evaluation_log=null`, retain checkpoints, and evaluate offline
+on separate GPUs or after training. See [DDP evaluation and validation](docs/ddp-evaluation.md)
+for the workaround, CPU tests, and hardware checks.
+
 - **Classification Accuracy**: Evaluate standard and robust accuracy:
   ```bash
   python run_acc_eval.py $config_file

@@ -204,7 +204,9 @@ class TrainConfig:
 
     @property
     def device(self) -> torch.device:
-        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        from rebm.training.distributed import process_device
+
+        return process_device(self.use_ddp)
 
 
 def load_train_config(
